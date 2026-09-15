@@ -1,0 +1,155 @@
+views:
+  - title: Wifi Clients
+    path: wifi-clients
+    type: sections
+    max_columns: 4
+    sections:
+      - type: grid
+        column_span: 4
+        cards:
+          - type: heading
+            heading: Wifi Clients
+            heading_style: title
+
+          - type: entities
+            title: Client Filters
+            entities:
+              - entity: select.wifi_client_fortigate_filter
+                name: FortiGate
+              - entity: select.wifi_client_ap_filter
+                name: Access point
+              - entity: select.wifi_client_ssid_filter
+                name: SSID
+            grid_options:
+              columns: full
+
+          - type: custom:auto-entities
+            card:
+              type: custom:layout-card
+              layout_type: custom:grid-layout
+              layout:
+                grid-template-columns: repeat(auto-fit, minmax(300px, 1fr))
+                grid-gap: 8px
+            card_param: cards
+            filter:
+              template: |
+                {% set ns = namespace(cards=[]) %}
+
+                {% set selected_fortigate =
+                  states('select.wifi_client_fortigate_filter') %}
+
+                {% set selected_ap =
+                  states('select.wifi_client_ap_filter') %}
+
+                {% set selected_ssid =
+                  states('select.wifi_client_ssid_filter') %}
+
+                {% for mac in states.sensor | sort(attribute='entity_id') %}
+                  {% if mac.entity_id.startswith('sensor.wifi_client_')
+                        and mac.entity_id.endswith('_mac_address') %}
+
+                    {% set base =
+                      mac.entity_id | replace('_mac_address', '') %}
+
+                    {% set hostname = states(base ~ '_hostname') %}
+                    {% set last_known_hostname =
+                      states(base ~ '_last_known_hostname') %}
+                    {% set fortigate = states(base ~ '_fortigate') %}
+                    {% set ap = states(base ~ '_ap_name') %}
+                    {% set ssid = states(base ~ '_ssid') %}
+
+                    {% set fortigate_matches =
+                      selected_fortigate in
+                        ['All', 'unknown', 'unavailable', 'none', '']
+                      or fortigate == selected_fortigate
+                    %}
+
+                    {% set ap_matches =
+                      selected_ap in
+                        ['All', 'unknown', 'unavailable', 'none', '']
+                      or ap == selected_ap
+                    %}
+
+                    {% set unavailable_mode =
+                      selected_ssid == 'Unavailable Clients'
+                    %}
+
+                    {% set ssid_matches =
+                      (
+                        unavailable_mode
+                        and mac.state == 'unavailable'
+                      )
+                      or
+                      (
+                        not unavailable_mode
+                        and (
+                          selected_ssid in
+                            ['All', 'unknown', 'unavailable', 'none', '']
+                          or ssid == selected_ssid
+                        )
+                      )
+                    %}
+
+                    {% if fortigate_matches
+                          and ap_matches
+                          and ssid_matches %}
+
+                      {% if hostname not in
+                            ['unknown', 'unavailable', 'none', ''] %}
+                        {% set title = hostname %}
+                      {% elif last_known_hostname not in
+                            ['unknown', 'unavailable', 'none', ''] %}
+                        {% set title = last_known_hostname %}
+                      {% else %}
+                        {% set title = 'Wifi Client' %}
+                      {% endif %}
+
+                      {% set ns.cards = ns.cards + [{
+                        'type': 'entities',
+                        'title': title,
+                        'entities': [
+                          {
+                            'entity': mac.entity_id,
+                            'name': 'MAC address'
+                          },
+                          {
+                            'entity': base ~ '_last_known_mac',
+                            'name': 'Last Known MAC'
+                          },
+                          {
+                            'entity': base ~ '_ip_address',
+                            'name': 'IP address'
+                          },
+                          {
+                            'entity': base ~ '_fortigate',
+                            'name': 'FortiGate'
+                          },
+                          {
+                            'entity': base ~ '_ap_name',
+                            'name': 'Access point'
+                          },
+                          {
+                            'entity': base ~ '_ssid',
+                            'name': 'SSID'
+                          },
+                          {
+                            'entity': base ~ '_hostname',
+                            'name': 'Hostname'
+                          },
+                          {
+                            'entity': base ~ '_last_known_hostname',
+                            'name': 'Last Known Hostname'
+                          },
+                          {
+                            'entity': base ~ '_signal',
+                            'name': 'Signal strength'
+                          }
+                        ]
+                      }] %}
+                    {% endif %}
+                  {% endif %}
+                {% endfor %}
+
+                {{ ns.cards }}
+            grid_options:
+              columns: full

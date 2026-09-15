@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+repository_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+core_directory="$(cd "${repository_directory}/../.." && pwd)"
+test_link="${core_directory}/tests/components/fortios_kd"
+
+if [[ -e "${test_link}" || -L "${test_link}" ]]; then
+    echo "Refusing to replace existing path: ${test_link}" >&2
+    exit 1
+fi
+
+ln -s "${repository_directory}/tests" "${test_link}"
+trap 'unlink "${test_link}"' EXIT
+
+cd "${core_directory}"
+pytest -q tests/components/fortios_kd "$@"
