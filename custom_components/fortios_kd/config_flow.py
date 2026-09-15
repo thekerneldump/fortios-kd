@@ -21,6 +21,7 @@ from .const import (
     CONF_MASK_SERIAL_NUMBERS,
     CONF_MASK_SSIDS,
     CONF_MASK_VLAN_IDS,
+    CONF_REQUEST_TIMEOUT,
     DEFAULT_INCLUDE_UNASSIGNED_SSIDS,
     DEFAULT_MASK_AP_NAMES,
     DEFAULT_MASK_CLIENT_HOSTNAMES,
@@ -28,6 +29,7 @@ from .const import (
     DEFAULT_MASK_SERIAL_NUMBERS,
     DEFAULT_MASK_SSIDS,
     DEFAULT_MASK_VLAN_IDS,
+    DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_VERIFY_SSL,
     DOMAIN,
 )
@@ -42,6 +44,18 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Optional(
             CONF_VERIFY_SSL, default=DEFAULT_VERIFY_SSL
         ): selector.BooleanSelector(),
+        vol.Optional(
+            CONF_REQUEST_TIMEOUT,
+            default=DEFAULT_REQUEST_TIMEOUT,
+        ): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=5,
+                max=300,
+                step=1,
+                mode=selector.NumberSelectorMode.BOX,
+                unit_of_measurement="seconds",
+            )
+        ),
         vol.Optional(
             CONF_INCLUDE_UNASSIGNED_SSIDS,
             default=DEFAULT_INCLUDE_UNASSIGNED_SSIDS,
@@ -93,6 +107,7 @@ async def async_validate_input(
         int(data[CONF_PORT]),
         data[CONF_API_KEY],
         data[CONF_VERIFY_SSL],
+        int(data[CONF_REQUEST_TIMEOUT]),
     )
 
     try:
@@ -124,6 +139,7 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             host = user_input[CONF_HOST].strip().lower()
             user_input[CONF_HOST] = host
             user_input[CONF_PORT] = int(user_input[CONF_PORT])
+            user_input[CONF_REQUEST_TIMEOUT] = int(user_input[CONF_REQUEST_TIMEOUT])
 
             await self.async_set_unique_id(host)
             self._abort_if_unique_id_mismatch()
@@ -160,6 +176,7 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             host = user_input[CONF_HOST].strip().lower()
             user_input[CONF_HOST] = host
             user_input[CONF_PORT] = int(user_input[CONF_PORT])
+            user_input[CONF_REQUEST_TIMEOUT] = int(user_input[CONF_REQUEST_TIMEOUT])
 
             await self.async_set_unique_id(host)
             self._abort_if_unique_id_configured()

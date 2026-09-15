@@ -22,6 +22,7 @@ class FortiOSApi:
         port: int,
         api_key: str,
         verify_ssl: bool,
+        request_timeout: int = 60,
     ) -> None:
         """Initialize the FortiOS API."""
         self._http = FortiOSHttpClient(
@@ -30,6 +31,7 @@ class FortiOSApi:
             port,
             api_key,
             verify_ssl,
+            request_timeout,
         )
         self.context = FortiOSApiContext()
         self.configuration = FortiOSConfigurationApi(self._http, self.context)

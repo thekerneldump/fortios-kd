@@ -16,6 +16,7 @@ CONF_MASK_CLIENT_HOSTNAMES = "mask_client_hostnames"
 CONF_MASK_VLAN_IDS = "mask_vlan_ids"
 CONF_MASK_AP_NAMES = "mask_ap_names"
 CONF_INCLUDE_UNASSIGNED_SSIDS = "include_unassigned_ssids"
+CONF_REQUEST_TIMEOUT = "request_timeout"
 
 
 async def test_user_flow(
@@ -42,6 +43,7 @@ async def test_user_flow(
             CONF_API_KEY: "test-api-key",
             CONF_PORT: 8443,
             CONF_VERIFY_SSL: True,
+            CONF_REQUEST_TIMEOUT: 60,
             CONF_INCLUDE_UNASSIGNED_SSIDS: False,
             CONF_MASK_SERIAL_NUMBERS: True,
             CONF_MASK_SSIDS: True,
@@ -59,6 +61,7 @@ async def test_user_flow(
         CONF_API_KEY: "test-api-key",
         CONF_PORT: 8443,
         CONF_VERIFY_SSL: True,
+        CONF_REQUEST_TIMEOUT: 60,
         CONF_INCLUDE_UNASSIGNED_SSIDS: False,
         CONF_MASK_SERIAL_NUMBERS: True,
         CONF_MASK_SSIDS: True,
