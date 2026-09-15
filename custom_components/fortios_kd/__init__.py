@@ -1,6 +1,5 @@
 """The FortiOS-KD integration."""
 
-import json
 import logging
 
 from aiohttp import ClientError
@@ -23,11 +22,13 @@ from .const import (
     CONF_MASK_AP_NAMES,
     CONF_MASK_SERIAL_NUMBERS,
     CONF_MASK_SSIDS,
+    CONF_REQUEST_TIMEOUT,
     DATA_FILTER_MANAGER,
     DEFAULT_INCLUDE_UNASSIGNED_SSIDS,
     DEFAULT_MASK_AP_NAMES,
     DEFAULT_MASK_SERIAL_NUMBERS,
     DEFAULT_MASK_SSIDS,
+    DEFAULT_REQUEST_TIMEOUT,
     DOMAIN,
 )
 from .coordinator import FortiOSKDCoordinator
@@ -46,15 +47,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry.data[CONF_PORT],
         entry.data[CONF_API_KEY],
         entry.data[CONF_VERIFY_SSL],
+        entry.data.get(CONF_REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT),
     )
 
     try:
         status = await client.async_initialize()
-
-        _LOGGER.info(
-            "FortiGate response:\n%s",
-            json.dumps(status, indent=2),
-        )
 
     except (ClientError, TimeoutError) as err:
         _LOGGER.exception("FortiGate request failed")

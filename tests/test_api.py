@@ -82,6 +82,7 @@ async def test_monitor_api(
     assert hass.data[DOMAIN][entry.entry_id]["status"] == status
     api = hass.data[DOMAIN][entry.entry_id]["client"]
     assert api.version is not None
+    assert api._http._timeout.total == 60  # noqa: SLF001
     assert (
         api.version.major,
         api.version.minor,
@@ -126,7 +127,10 @@ async def test_fortios_62_hostname_lookup(
         8443,
         "test-api-key",
         False,
+        17,
     )
+
+    assert api._http._timeout.total == 17  # noqa: SLF001
 
     result = await api.async_initialize()
 

@@ -13,6 +13,7 @@
           "api_key": "API key",
           "host": "Hostname or IP address",
           "include_unassigned_ssids": "Include unassigned SSIDs in filters",
+          "request_timeout": "Request timeout",
           "verify_ssl": "Verify SSL certificate",
           "mask_serial_numbers": "Mask serial numbers",
           "mask_ssids": "Mask SSIDs",
@@ -26,7 +27,8 @@
       },
       "reconfigure": {
         "data": {
-          "include_unassigned_ssids": "Include unassigned SSIDs in filters"
+          "include_unassigned_ssids": "Include unassigned SSIDs in filters",
+          "request_timeout": "Request timeout"
         },
         "description": "Detected FortiOS version: {version}",
         "title": "Configure FortiGate"

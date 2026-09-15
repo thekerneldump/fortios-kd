@@ -8,6 +8,9 @@ FortiGate-managed access points and their connected wifi clients. FortiOS KD is
 an independent community project and is not affiliated with or endorsed by
 Fortinet or the Home Assistant project.
 
+Release changes and deliberate compatibility, security, and privacy decisions
+are recorded in the [changelog](CHANGELOG.md).
+
 ## Features
 
 - Configure one or more FortiGate hubs through the Home Assistant UI.
@@ -122,6 +125,8 @@ When adding a FortiGate, provide:
 - **API key:** The key belonging to the dedicated REST API administrator.
 - **Verify SSL certificate:** Enable this when the FortiGate presents a
   certificate trusted by Home Assistant.
+- **Request timeout:** Maximum time to wait for each FortiGate API request.
+  The default is 60 seconds, and the allowed range is 5–300 seconds.
 - **Include unassigned SSIDs in filters:** Include every configured VAP in the
   SSID filter instead of only SSIDs assigned through active WTP profiles.
 
@@ -144,13 +149,21 @@ Privacy controls are configured independently for each FortiGate hub:
 - **Mask AP names:** Preserve a recognizable prefix and suffix on longer names.
 
 Reconfiguring privacy controls reloads that FortiGate hub so its entities are
-recreated with the new display values. Last-known identity sensors follow the
-same MAC and hostname masking settings.
+recreated with the new display values. Newly observed values in last-known
+identity sensors follow the same MAC and hostname masking settings.
 
-Masking is intended to reduce accidental disclosure while navigating dashboards
-or recording demonstrations. Home Assistant history may still contain values
-recorded before masking was enabled, so avoid opening entity history when sharing
-a screen that may contain older private data.
+Masking is a point-in-time display feature intended to reduce accidental
+disclosure while navigating dashboards, sharing screenshots, or recording
+demonstrations. It is not anonymization and does not rewrite Home Assistant's
+entity registry, device identifiers, recorder history, backups, or stored restore
+state. Home Assistant history and Last Known Hostname restore state may still
+contain values recorded before masking was enabled, so avoid opening entity
+details or history while sharing a screen that may contain older private data.
+
+Short device names of eight characters or fewer are currently left unchanged.
+For client hostnames containing a dash, the complete portion before the first
+dash remains visible. A stronger masking strategy is being designed in
+[issue #3](https://github.com/thekerneldump/fortios-kd/issues/3).
 
 ## Wifi client dashboard filters
 
