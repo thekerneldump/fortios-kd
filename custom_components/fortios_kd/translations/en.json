@@ -1,0 +1,36 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "This FortiGate is already configured"
+    },
+    "error": {
+      "cannot_connect": "Unable to connect to the FortiGate. Check the host, port, and SSL settings.",
+      "invalid_auth": "Invalid API key or insufficient API permissions."
+    },
+    "step": {
+      "user": {
+        "data": {
+          "api_key": "API key",
+          "host": "Hostname or IP address",
+          "include_unassigned_ssids": "Include unassigned SSIDs in filters",
+          "verify_ssl": "Verify SSL certificate",
+          "mask_serial_numbers": "Mask serial numbers",
+          "mask_ssids": "Mask SSIDs",
+          "mask_client_macs": "Mask client MAC addresses",
+          "mask_client_hostnames": "Mask client hostnames",
+          "mask_vlan_ids": "Mask client VLAN IDs",
+          "mask_ap_names": "Mask AP names"
+        },
+        "description": "Enter the connection details for your FortiGate firewall. Use a read-only API key.",
+        "title": "Connect to FortiGate"
+      },
+      "reconfigure": {
+        "data": {
+          "include_unassigned_ssids": "Include unassigned SSIDs in filters"
+        },
+        "description": "Detected FortiOS version: {version}",
+        "title": "Configure FortiGate"
+      }
+    }
+  }
+}

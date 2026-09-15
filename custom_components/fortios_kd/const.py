@@ -1,0 +1,25 @@
+"""Constants for FortiOS-KD."""
+
+DOMAIN = "fortios_kd"
+DATA_FILTER_MANAGER = "filter_manager"
+
+DEFAULT_VERIFY_SSL = True
+
+CONF_INCLUDE_UNASSIGNED_SSIDS = "include_unassigned_ssids"
+DEFAULT_INCLUDE_UNASSIGNED_SSIDS = False
+
+CONF_MASK_SERIAL_NUMBERS = "mask_serial_numbers"
+DEFAULT_MASK_SERIAL_NUMBERS = True
+CONF_MASK_SSIDS = "mask_ssids"
+DEFAULT_MASK_SSIDS = True
+CONF_MASK_CLIENT_MACS = "mask_client_macs"
+DEFAULT_MASK_CLIENT_MACS = True
+
+CONF_MASK_CLIENT_HOSTNAMES = "mask_client_hostnames"
+DEFAULT_MASK_CLIENT_HOSTNAMES = True
+
+CONF_MASK_VLAN_IDS = "mask_vlan_ids"
+DEFAULT_MASK_VLAN_IDS = True
+
+CONF_MASK_AP_NAMES = "mask_ap_names"
+DEFAULT_MASK_AP_NAMES = True
