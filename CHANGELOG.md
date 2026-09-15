@@ -3,7 +3,7 @@
 Notable changes and deliberate compatibility, security, and privacy decisions
 are recorded here for each release.
 
-## Unreleased
+## 0.2.2 - 2026-09-15
 
 ### Security
 
