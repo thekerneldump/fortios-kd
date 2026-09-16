@@ -7,6 +7,13 @@ are recorded here for each release.
 
 ### Added
 
+- Add an automatically populated Wifi graph community dashboard with shared
+  FortiGate, AP, and SSID filters.
+- Add automatically discovered AP client, CPU, free-memory, and total-memory
+  history graphs.
+- Add 2.4 GHz and 5 GHz graphs for channels, channel utilization, noise floor,
+  RX/TX MAC errors, RX/TX MAC error rates, calculated throughput, and
+  FortiGate-reported bandwidth.
 - Add an automatically registered community dashboard strategy for Home
   Assistant 2026.5 and newer, while retaining the editable YAML dashboard.
 - Add optional per-FortiGate device organization using a selected or automatically
@@ -19,6 +26,23 @@ are recorded here for each release.
   associated wifi clients while preserving unrelated client labels.
 - Add opt-in propagation of FortiGate label additions and removals to all APs
   and wifi clients managed by that hub, with an explicit broad-change warning.
+
+### Changed
+
+- Render Wifi client and graph dashboard contents in the browser instead of
+  using large server-side templates, reducing Home Assistant event-loop work
+  and making filter changes react immediately.
+- Use indexed wifi-client lookups and avoid rewriting unchanged client entity
+  states during coordinator refreshes.
+- Show only AP names in graph legends and arrange them as two aligned columns,
+  including cards that Home Assistant renders lazily while scrolling.
+
+### Fixed
+
+- Register both community-dashboard frontend modules directly so either
+  dashboard strategy loads independently.
+- Recognize the FortiOS 6.2 `802.11ac` radio type as 5 GHz so its radio metrics
+  and graphs are created.
 
 ## 0.2.2 - 2026-09-15
 
