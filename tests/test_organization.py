@@ -1,6 +1,7 @@
 """Tests for FortiOS KD hub organization."""
 
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import (
@@ -37,6 +38,7 @@ async def test_area_moves_preserve_manual_device_areas(
             "inherit_hub_area": True,
             "move_devices_if_hub_moves": True,
             "clients_follow_ap_area": True,
+            "clients_follow_ap_labels": True,
         },
     )
     entry.add_to_hass(hass)
@@ -50,7 +52,8 @@ async def test_area_moves_preserve_manual_device_areas(
                     }
                 ]
             }
-        }
+        },
+        async_add_listener=Mock(return_value=Mock()),
     )
     manager = FortiOSKDOrganizationManager(
         hass,
@@ -79,6 +82,28 @@ async def test_area_moves_preserve_manual_device_areas(
     assert registry.async_get(hub.id).area_id == home.id
     assert registry.async_get(ap.id).area_id == home.id
     assert registry.async_get(client.id).area_id == home.id
+
+    label_registry = lr.async_get(hass)
+    ap_label = label_registry.async_create("Upstairs")
+    replacement_label = label_registry.async_create("Downstairs")
+    client_only_label = label_registry.async_create("Client only")
+    registry.async_update_device(
+        client.id,
+        labels={client_only_label.label_id},
+    )
+    registry.async_update_device(ap.id, labels={ap_label.label_id})
+    await hass.async_block_till_done()
+    assert registry.async_get(client.id).labels == {
+        ap_label.label_id,
+        client_only_label.label_id,
+    }
+
+    registry.async_update_device(ap.id, labels={replacement_label.label_id})
+    await hass.async_block_till_done()
+    assert registry.async_get(client.id).labels == {
+        replacement_label.label_id,
+        client_only_label.label_id,
+    }
 
     registry.async_update_device(ap.id, area_id=office.id)
     await hass.async_block_till_done()
@@ -116,7 +141,8 @@ async def test_label_is_created_and_applied_to_every_device(
     entry.add_to_hass(hass)
     office = ar.async_get(hass).async_create("Office")
     coordinator = SimpleNamespace(
-        data={"wifi_clients": {"results": [{"mac": CLIENT_MAC, "wtp_id": AP_SERIAL}]}}
+        data={"wifi_clients": {"results": [{"mac": CLIENT_MAC, "wtp_id": AP_SERIAL}]}},
+        async_add_listener=Mock(return_value=Mock()),
     )
     manager = FortiOSKDOrganizationManager(
         hass,

@@ -24,6 +24,7 @@ CONF_NEW_HUB_AREA_NAME = "new_hub_area_name"
 CONF_INHERIT_HUB_AREA = "inherit_hub_area"
 CONF_MOVE_DEVICES_WITH_HUB = "move_devices_if_hub_moves"
 CONF_CLIENTS_FOLLOW_AP_AREA = "clients_follow_ap_area"
+CONF_CLIENTS_FOLLOW_AP_LABELS = "clients_follow_ap_labels"
 CONF_HUB_LABEL_COLOR = "hub_label_color"
 
 
@@ -75,6 +76,7 @@ async def test_user_flow(
         CONF_INHERIT_HUB_AREA: False,
         CONF_MOVE_DEVICES_WITH_HUB: False,
         CONF_CLIENTS_FOLLOW_AP_AREA: False,
+        CONF_CLIENTS_FOLLOW_AP_LABELS: False,
         CONF_HUB_LABEL_COLOR: [3, 169, 244],
         CONF_MASK_SERIAL_NUMBERS: True,
         CONF_MASK_SSIDS: True,

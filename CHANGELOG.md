@@ -11,6 +11,8 @@ are recorded here for each release.
   created Home Assistant area, or a reusable/automatically created label.
 - Add opt-in propagation when a hub or AP changes area while preserving devices
   that users manually moved elsewhere.
+- Add opt-in synchronization of AP label additions and removals to currently
+  associated wifi clients while preserving unrelated client labels.
 
 ## 0.2.2 - 2026-09-15
 

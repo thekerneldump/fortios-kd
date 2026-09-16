@@ -15,6 +15,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .api import FortiOSApi
 from .const import (
     CONF_CLIENTS_FOLLOW_AP_AREA,
+    CONF_CLIENTS_FOLLOW_AP_LABELS,
     CONF_HUB_AREA_ID,
     CONF_HUB_LABEL,
     CONF_HUB_LABEL_COLOR,
@@ -31,6 +32,7 @@ from .const import (
     CONF_ORGANIZATION_MODE,
     CONF_REQUEST_TIMEOUT,
     DEFAULT_CLIENTS_FOLLOW_AP_AREA,
+    DEFAULT_CLIENTS_FOLLOW_AP_LABELS,
     DEFAULT_HUB_LABEL_COLOR,
     DEFAULT_INCLUDE_UNASSIGNED_SSIDS,
     DEFAULT_INHERIT_HUB_AREA,
@@ -112,6 +114,10 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Optional(
             CONF_CLIENTS_FOLLOW_AP_AREA,
             default=DEFAULT_CLIENTS_FOLLOW_AP_AREA,
+        ): selector.BooleanSelector(),
+        vol.Optional(
+            CONF_CLIENTS_FOLLOW_AP_LABELS,
+            default=DEFAULT_CLIENTS_FOLLOW_AP_LABELS,
         ): selector.BooleanSelector(),
         vol.Optional(CONF_HUB_LABEL): selector.TextSelector(),
         vol.Optional(

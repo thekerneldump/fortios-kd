@@ -19,6 +19,8 @@ CONF_MOVE_DEVICES_WITH_HUB = "move_devices_if_hub_moves"
 DEFAULT_MOVE_DEVICES_WITH_HUB = False
 CONF_CLIENTS_FOLLOW_AP_AREA = "clients_follow_ap_area"
 DEFAULT_CLIENTS_FOLLOW_AP_AREA = False
+CONF_CLIENTS_FOLLOW_AP_LABELS = "clients_follow_ap_labels"
+DEFAULT_CLIENTS_FOLLOW_AP_LABELS = False
 
 CONF_HUB_LABEL = "hub_label"
 CONF_HUB_LABEL_COLOR = "hub_label_color"

@@ -9,6 +9,7 @@ from homeassistant.helpers import device_registry as dr, label_registry as lr
 
 from .const import (
     CONF_CLIENTS_FOLLOW_AP_AREA,
+    CONF_CLIENTS_FOLLOW_AP_LABELS,
     CONF_HUB_AREA_ID,
     CONF_HUB_LABEL,
     CONF_HUB_LABEL_COLOR,
@@ -16,6 +17,7 @@ from .const import (
     CONF_MOVE_DEVICES_WITH_HUB,
     CONF_ORGANIZATION_MODE,
     DEFAULT_CLIENTS_FOLLOW_AP_AREA,
+    DEFAULT_CLIENTS_FOLLOW_AP_LABELS,
     DEFAULT_INHERIT_HUB_AREA,
     DEFAULT_MOVE_DEVICES_WITH_HUB,
     DEFAULT_ORGANIZATION_MODE,
@@ -56,6 +58,7 @@ class FortiOSKDOrganizationManager:
         self._device_registry = dr.async_get(hass)
         self._label_registry = lr.async_get(hass)
         self._updating_device_ids: set[str] = set()
+        self._client_ap_labels: dict[str, set[str]] = {}
 
     @callback
     def setup(self) -> None:
@@ -66,6 +69,9 @@ class FortiOSKDOrganizationManager:
                 dr.EVENT_DEVICE_REGISTRY_UPDATED,
                 self._handle_device_registry_update,
             )
+        )
+        self._entry.async_on_unload(
+            self._coordinator.async_add_listener(self._handle_coordinator_update)
         )
 
     @callback
@@ -91,6 +97,12 @@ class FortiOSKDOrganizationManager:
         if new_label_id:
             for device in devices:
                 self._add_label(device, new_label_id)
+
+        if new_settings.get(
+            CONF_CLIENTS_FOLLOW_AP_LABELS,
+            DEFAULT_CLIENTS_FOLLOW_AP_LABELS,
+        ):
+            self._sync_clients_to_ap_labels()
 
         clients_follow_ap = new_settings.get(
             CONF_CLIENTS_FOLLOW_AP_AREA,
@@ -145,6 +157,20 @@ class FortiOSKDOrganizationManager:
             DEFAULT_CLIENTS_FOLLOW_AP_AREA,
         ):
             self._sync_clients_to_ap_areas()
+        if self._settings.get(
+            CONF_CLIENTS_FOLLOW_AP_LABELS,
+            DEFAULT_CLIENTS_FOLLOW_AP_LABELS,
+        ):
+            self._sync_clients_to_ap_labels()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Keep associated clients aligned after polling or roaming."""
+        if self._settings.get(
+            CONF_CLIENTS_FOLLOW_AP_LABELS,
+            DEFAULT_CLIENTS_FOLLOW_AP_LABELS,
+        ):
+            self._sync_clients_to_ap_labels()
 
     @callback
     def _handle_device_registry_update(
@@ -164,14 +190,18 @@ class FortiOSKDOrganizationManager:
             self._apply_to_new_device(device)
             return
 
-        if event.data["action"] != "update" or "area_id" not in event.data["changes"]:
+        if event.data["action"] != "update":
             return
 
-        old_area_id = event.data["changes"]["area_id"]
-        if self._is_hub(device):
-            self._handle_hub_area_move(device.area_id, old_area_id)
-        elif self._is_ap(device):
-            self._handle_ap_area_move(device, old_area_id)
+        changes = event.data["changes"]
+        if "area_id" in changes:
+            old_area_id = changes["area_id"]
+            if self._is_hub(device):
+                self._handle_hub_area_move(device.area_id, old_area_id)
+            elif self._is_ap(device):
+                self._handle_ap_area_move(device, old_area_id)
+        if "labels" in changes and self._is_ap(device):
+            self._handle_ap_label_change(device, set(changes["labels"]))
 
     @callback
     def _apply_to_new_device(self, device: dr.DeviceEntry) -> None:
@@ -179,6 +209,12 @@ class FortiOSKDOrganizationManager:
         label_id = self._configured_label_id(self._settings, create=True)
         if label_id:
             self._add_label(device, label_id)
+
+        if self._is_client(device) and self._settings.get(
+            CONF_CLIENTS_FOLLOW_AP_LABELS,
+            DEFAULT_CLIENTS_FOLLOW_AP_LABELS,
+        ):
+            self._sync_client_to_ap_labels(device)
 
         if device.area_id is not None:
             return
@@ -259,6 +295,52 @@ class FortiOSKDOrganizationManager:
                 self._update_device(client_device, area_id=ap_device.area_id)
 
     @callback
+    def _handle_ap_label_change(
+        self,
+        ap_device: dr.DeviceEntry,
+        old_labels: set[str],
+    ) -> None:
+        """Apply AP label additions and removals to its current clients."""
+        if not self._settings.get(
+            CONF_CLIENTS_FOLLOW_AP_LABELS,
+            DEFAULT_CLIENTS_FOLLOW_AP_LABELS,
+        ):
+            return
+
+        ap_serial = self._device_identifier(ap_device)
+        if ap_serial is None:
+            return
+
+        added_labels = ap_device.labels - old_labels
+        removed_labels = old_labels - ap_device.labels
+        for client_device in self._client_devices_for_ap(ap_serial):
+            labels = (client_device.labels | added_labels) - removed_labels
+            self._client_ap_labels[client_device.id] = set(ap_device.labels)
+            if labels != client_device.labels:
+                self._update_device(client_device, labels=labels)
+
+    @callback
+    def _sync_clients_to_ap_labels(self) -> None:
+        """Synchronize current clients with their AP labels."""
+        for client_device in self._client_devices():
+            self._sync_client_to_ap_labels(client_device)
+
+    @callback
+    def _sync_client_to_ap_labels(self, client_device: dr.DeviceEntry) -> None:
+        """Copy an AP's labels while retaining unrelated client labels."""
+        ap_device = self._client_ap_device(client_device)
+        if ap_device is None:
+            return
+
+        previous_ap_labels = self._client_ap_labels.get(client_device.id, set())
+        labels = (client_device.labels | ap_device.labels) - (
+            previous_ap_labels - ap_device.labels
+        )
+        self._client_ap_labels[client_device.id] = set(ap_device.labels)
+        if labels != client_device.labels:
+            self._update_device(client_device, labels=labels)
+
+    @callback
     def _sync_clients_to_ap_areas(self, fallback_area_id: str | None = None) -> None:
         """Assign unassigned or previously hub-managed clients to their AP area."""
         for client in self._coordinator.data.get("wifi_clients", {}).get("results", []):
@@ -266,18 +348,16 @@ class FortiOSKDOrganizationManager:
             ap_serial = client.get("wtp_id")
             if not isinstance(mac, str) or not isinstance(ap_serial, str):
                 continue
-            client_device = self._device_registry.async_get_device(
-                identifiers={
-                    (
-                        DOMAIN,
-                        f"{self._fortigate_serial}{CLIENT_IDENTIFIER_MARKER}{mac.lower()}",
-                    )
-                },
-                connections=set(),
+            client_device = self._device_registry.async_get_device_by_identifier(
+                (
+                    DOMAIN,
+                    f"{self._fortigate_serial}{CLIENT_IDENTIFIER_MARKER}{mac.lower()}",
+                ),
+                self._entry.entry_id,
             )
-            ap_device = self._device_registry.async_get_device(
-                identifiers={(DOMAIN, ap_serial)},
-                connections=set(),
+            ap_device = self._device_registry.async_get_device_by_identifier(
+                (DOMAIN, ap_serial),
+                self._entry.entry_id,
             )
             if client_device is None or ap_device is None or ap_device.area_id is None:
                 continue
@@ -289,6 +369,11 @@ class FortiOSKDOrganizationManager:
 
     def _client_ap_area(self, client_device: dr.DeviceEntry) -> str | None:
         """Return the current AP area for a client device."""
+        ap_device = self._client_ap_device(client_device)
+        return ap_device.area_id if ap_device else None
+
+    def _client_ap_device(self, client_device: dr.DeviceEntry) -> dr.DeviceEntry | None:
+        """Return the current AP device for a client device."""
         identifier = self._device_identifier(client_device)
         if identifier is None or CLIENT_IDENTIFIER_MARKER not in identifier:
             return None
@@ -301,12 +386,29 @@ class FortiOSKDOrganizationManager:
                 and client_mac.lower() == mac
                 and isinstance(ap_serial, str)
             ):
-                ap_device = self._device_registry.async_get_device(
-                    identifiers={(DOMAIN, ap_serial)},
-                    connections=set(),
+                return self._device_registry.async_get_device_by_identifier(
+                    (DOMAIN, ap_serial),
+                    self._entry.entry_id,
                 )
-                return ap_device.area_id if ap_device else None
         return None
+
+    def _client_devices(self) -> list[dr.DeviceEntry]:
+        """Return currently associated client devices."""
+        devices: list[dr.DeviceEntry] = []
+        for client in self._coordinator.data.get("wifi_clients", {}).get("results", []):
+            mac = client.get("mac")
+            if not isinstance(mac, str):
+                continue
+            device = self._device_registry.async_get_device_by_identifier(
+                (
+                    DOMAIN,
+                    f"{self._fortigate_serial}{CLIENT_IDENTIFIER_MARKER}{mac.lower()}",
+                ),
+                self._entry.entry_id,
+            )
+            if device is not None:
+                devices.append(device)
+        return devices
 
     def _client_devices_for_ap(self, ap_serial: str) -> list[dr.DeviceEntry]:
         """Return currently connected client devices for an AP serial."""
@@ -315,14 +417,12 @@ class FortiOSKDOrganizationManager:
             mac = client.get("mac")
             if client.get("wtp_id") != ap_serial or not isinstance(mac, str):
                 continue
-            device = self._device_registry.async_get_device(
-                identifiers={
-                    (
-                        DOMAIN,
-                        f"{self._fortigate_serial}{CLIENT_IDENTIFIER_MARKER}{mac.lower()}",
-                    )
-                },
-                connections=set(),
+            device = self._device_registry.async_get_device_by_identifier(
+                (
+                    DOMAIN,
+                    f"{self._fortigate_serial}{CLIENT_IDENTIFIER_MARKER}{mac.lower()}",
+                ),
+                self._entry.entry_id,
             )
             if device is not None:
                 devices.append(device)
