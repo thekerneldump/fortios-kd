@@ -149,6 +149,13 @@ label, both, or neither:
   client-only labels. A separate opt-in setting propagates labels added to or
   removed from the FortiGate device to all of its managed APs and wifi clients.
 
+AP-to-client synchronization only removes the specific labels removed from the
+AP. For example, if an AP has the label `Upstairs` and a phone connected to it
+has both `Upstairs` and `Family member`, removing `Upstairs` from the AP removes
+only `Upstairs` from the phone. The client-only `Family member` label remains.
+This allows labels identifying a person, device purpose, or ownership to coexist
+with location labels inherited from an AP.
+
 > **Warning:** When FortiGate label propagation is enabled, changing a label on
 > the FortiGate device intentionally updates every AP and wifi client managed by
 > that hub. Removing a FortiGate label also removes that label from those managed
