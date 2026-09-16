@@ -50,6 +50,7 @@ from .const import (
     DEFAULT_VERIFY_SSL,
     DOMAIN,
     ORGANIZATION_MODE_AREA,
+    ORGANIZATION_MODE_BOTH,
     ORGANIZATION_MODE_LABEL,
     ORGANIZATION_MODE_NONE,
 )
@@ -99,34 +100,14 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
                         value=ORGANIZATION_MODE_LABEL,
                         label="Use a label",
                     ),
+                    selector.SelectOptionDict(
+                        value=ORGANIZATION_MODE_BOTH,
+                        label="Use an area and a label",
+                    ),
                 ],
                 mode=selector.SelectSelectorMode.DROPDOWN,
             )
         ),
-        vol.Optional(CONF_HUB_AREA_ID): selector.AreaSelector(),
-        vol.Optional(CONF_NEW_HUB_AREA_NAME): selector.TextSelector(),
-        vol.Optional(
-            CONF_INHERIT_HUB_AREA,
-            default=DEFAULT_INHERIT_HUB_AREA,
-        ): selector.BooleanSelector(),
-        vol.Optional(
-            CONF_MOVE_DEVICES_WITH_HUB,
-            default=DEFAULT_MOVE_DEVICES_WITH_HUB,
-        ): selector.BooleanSelector(),
-        vol.Optional(
-            CONF_CLIENTS_FOLLOW_AP_AREA,
-            default=DEFAULT_CLIENTS_FOLLOW_AP_AREA,
-        ): selector.BooleanSelector(),
-        vol.Optional(
-            CONF_CLIENTS_FOLLOW_AP_LABELS,
-            default=DEFAULT_CLIENTS_FOLLOW_AP_LABELS,
-        ): selector.BooleanSelector(),
-        vol.Optional(CONF_HUB_LABEL_ID): selector.LabelSelector(),
-        vol.Optional(CONF_NEW_HUB_LABEL_NAME): selector.TextSelector(),
-        vol.Optional(
-            CONF_HUB_LABEL_COLOR,
-            default=DEFAULT_HUB_LABEL_COLOR,
-        ): selector.ColorRGBSelector(),
         vol.Optional(
             CONF_MASK_SERIAL_NUMBERS,
             default=DEFAULT_MASK_SERIAL_NUMBERS,
@@ -153,6 +134,55 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         ): selector.BooleanSelector(),
     }
 )
+
+AREA_ORGANIZATION_SCHEMA = vol.Schema(
+    {
+        vol.Optional(CONF_HUB_AREA_ID): selector.AreaSelector(),
+        vol.Optional(CONF_NEW_HUB_AREA_NAME): selector.TextSelector(),
+        vol.Optional(
+            CONF_INHERIT_HUB_AREA,
+            default=DEFAULT_INHERIT_HUB_AREA,
+        ): selector.BooleanSelector(),
+        vol.Optional(
+            CONF_MOVE_DEVICES_WITH_HUB,
+            default=DEFAULT_MOVE_DEVICES_WITH_HUB,
+        ): selector.BooleanSelector(),
+        vol.Optional(
+            CONF_CLIENTS_FOLLOW_AP_AREA,
+            default=DEFAULT_CLIENTS_FOLLOW_AP_AREA,
+        ): selector.BooleanSelector(),
+    }
+)
+
+LABEL_ORGANIZATION_SCHEMA = vol.Schema(
+    {
+        vol.Optional(CONF_HUB_LABEL_ID): selector.LabelSelector(),
+        vol.Optional(CONF_NEW_HUB_LABEL_NAME): selector.TextSelector(),
+        vol.Optional(
+            CONF_HUB_LABEL_COLOR,
+            default=DEFAULT_HUB_LABEL_COLOR,
+        ): selector.ColorRGBSelector(),
+        vol.Optional(
+            CONF_CLIENTS_FOLLOW_AP_LABELS,
+            default=DEFAULT_CLIENTS_FOLLOW_AP_LABELS,
+        ): selector.BooleanSelector(),
+    }
+)
+
+AREA_ORGANIZATION_KEYS = {
+    CONF_HUB_AREA_ID,
+    CONF_NEW_HUB_AREA_NAME,
+    CONF_INHERIT_HUB_AREA,
+    CONF_MOVE_DEVICES_WITH_HUB,
+    CONF_CLIENTS_FOLLOW_AP_AREA,
+}
+LABEL_ORGANIZATION_KEYS = {
+    CONF_HUB_LABEL,
+    CONF_HUB_LABEL_ID,
+    CONF_NEW_HUB_LABEL_NAME,
+    CONF_HUB_LABEL_COLOR,
+    CONF_CLIENTS_FOLLOW_AP_LABELS,
+}
 
 
 class CannotConnect(Exception):
@@ -201,46 +231,46 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    def _validate_organization(
+    _pending_data: dict[str, Any]
+
+    def _validate_area(
         self,
         user_input: dict[str, Any],
         errors: dict[str, str],
     ) -> None:
-        """Validate and normalize optional hub organization settings."""
-        mode = user_input[CONF_ORGANIZATION_MODE]
+        """Validate and normalize area organization settings."""
+        area_id = user_input.get(CONF_HUB_AREA_ID)
+        new_area_name = str(user_input.get(CONF_NEW_HUB_AREA_NAME, "")).strip()
+        user_input[CONF_NEW_HUB_AREA_NAME] = new_area_name
+        if not area_id and not new_area_name:
+            errors[CONF_HUB_AREA_ID] = "area_required"
+        elif (
+            area_id
+            and not new_area_name
+            and ar.async_get(self.hass).async_get_area(area_id) is None
+        ):
+            errors[CONF_HUB_AREA_ID] = "invalid_area"
 
-        if mode == ORGANIZATION_MODE_AREA:
-            area_id = user_input.get(CONF_HUB_AREA_ID)
-            new_area_name = str(user_input.get(CONF_NEW_HUB_AREA_NAME, "")).strip()
-            user_input[CONF_NEW_HUB_AREA_NAME] = new_area_name
-            if not area_id and not new_area_name:
-                errors[CONF_HUB_AREA_ID] = "area_required"
-            elif (
-                area_id
-                and not new_area_name
-                and ar.async_get(self.hass).async_get_area(area_id) is None
-            ):
-                errors[CONF_HUB_AREA_ID] = "invalid_area"
-
-        if mode == ORGANIZATION_MODE_LABEL:
-            label_id = user_input.get(CONF_HUB_LABEL_ID)
-            new_label_name = str(user_input.get(CONF_NEW_HUB_LABEL_NAME, "")).strip()
-            user_input[CONF_NEW_HUB_LABEL_NAME] = new_label_name
-            if not label_id and not new_label_name:
-                errors[CONF_HUB_LABEL_ID] = "label_required"
-            elif (
-                label_id
-                and not new_label_name
-                and lr.async_get(self.hass).async_get_label(label_id) is None
-            ):
-                errors[CONF_HUB_LABEL_ID] = "invalid_label"
+    def _validate_label(
+        self,
+        user_input: dict[str, Any],
+        errors: dict[str, str],
+    ) -> None:
+        """Validate and normalize label organization settings."""
+        label_id = user_input.get(CONF_HUB_LABEL_ID)
+        new_label_name = str(user_input.get(CONF_NEW_HUB_LABEL_NAME, "")).strip()
+        user_input[CONF_NEW_HUB_LABEL_NAME] = new_label_name
+        if not label_id and not new_label_name:
+            errors[CONF_HUB_LABEL_ID] = "label_required"
+        elif (
+            label_id
+            and not new_label_name
+            and lr.async_get(self.hass).async_get_label(label_id) is None
+        ):
+            errors[CONF_HUB_LABEL_ID] = "invalid_label"
 
     def _resolve_new_area(self, user_input: dict[str, Any]) -> None:
         """Create or reuse a typed area name and store its area ID."""
-        if user_input[CONF_ORGANIZATION_MODE] != ORGANIZATION_MODE_AREA:
-            user_input.pop(CONF_NEW_HUB_AREA_NAME, None)
-            return
-
         new_area_name = user_input.pop(CONF_NEW_HUB_AREA_NAME, "")
         if new_area_name:
             area = ar.async_get(self.hass).async_get_or_create(new_area_name)
@@ -248,10 +278,6 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def _resolve_new_label(self, user_input: dict[str, Any]) -> None:
         """Create or reuse a typed label name and store its label ID."""
-        if user_input[CONF_ORGANIZATION_MODE] != ORGANIZATION_MODE_LABEL:
-            user_input.pop(CONF_NEW_HUB_LABEL_NAME, None)
-            return
-
         new_label_name = user_input.pop(CONF_NEW_HUB_LABEL_NAME, "")
         if new_label_name:
             label_registry = lr.async_get(self.hass)
@@ -275,6 +301,100 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     suggested[CONF_HUB_LABEL_ID] = label.label_id
         return suggested
 
+    def _clean_organization_data(self, data: dict[str, Any]) -> None:
+        """Remove settings that do not apply to the selected organization mode."""
+        mode = data[CONF_ORGANIZATION_MODE]
+        if mode not in (ORGANIZATION_MODE_AREA, ORGANIZATION_MODE_BOTH):
+            for key in AREA_ORGANIZATION_KEYS:
+                data.pop(key, None)
+        if mode not in (ORGANIZATION_MODE_LABEL, ORGANIZATION_MODE_BOTH):
+            for key in LABEL_ORGANIZATION_KEYS:
+                data.pop(key, None)
+
+    async def _async_finish_configuration(self) -> ConfigFlowResult:
+        """Create or update the config entry after organization choices."""
+        self._clean_organization_data(self._pending_data)
+        host = self._pending_data[CONF_HOST]
+        port = self._pending_data[CONF_PORT]
+
+        if self.context["source"] != config_entries.SOURCE_RECONFIGURE:
+            return self.async_create_entry(
+                title=f"{host}:{port}",
+                data=self._pending_data,
+            )
+
+        entry = self._get_reconfigure_entry()
+        stored_data = self.hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+        organization_manager = stored_data.get("organization_manager")
+        if isinstance(organization_manager, FortiOSKDOrganizationManager):
+            organization_manager.reconfigure(self._pending_data)
+        return self.async_update_reload_and_abort(
+            entry,
+            title=f"{host}:{port}",
+            data=self._pending_data,
+        )
+
+    async def _async_continue_organization(self) -> ConfigFlowResult:
+        """Open the relevant organization step or finish the flow."""
+        mode = self._pending_data[CONF_ORGANIZATION_MODE]
+        if mode in (ORGANIZATION_MODE_AREA, ORGANIZATION_MODE_BOTH):
+            return await self.async_step_area_organization()
+        if mode == ORGANIZATION_MODE_LABEL:
+            return await self.async_step_label_organization()
+        return await self._async_finish_configuration()
+
+    async def async_step_area_organization(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        """Configure optional area-based organization."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            self._validate_area(user_input, errors)
+            if not errors:
+                self._pending_data.update(user_input)
+                self._resolve_new_area(self._pending_data)
+                if self._pending_data[CONF_ORGANIZATION_MODE] == ORGANIZATION_MODE_BOTH:
+                    return await self.async_step_label_organization()
+                return await self._async_finish_configuration()
+
+        suggested = dict(self._pending_data)
+        if user_input is not None:
+            suggested.update(user_input)
+        return self.async_show_form(
+            step_id="area_organization",
+            data_schema=self.add_suggested_values_to_schema(
+                AREA_ORGANIZATION_SCHEMA,
+                suggested,
+            ),
+            errors=errors,
+        )
+
+    async def async_step_label_organization(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        """Configure optional label-based organization."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            self._validate_label(user_input, errors)
+            if not errors:
+                self._pending_data.update(user_input)
+                self._resolve_new_label(self._pending_data)
+                return await self._async_finish_configuration()
+
+        suggested = self._organization_suggested_values(self._pending_data)
+        if user_input is not None:
+            suggested.update(user_input)
+        return self.async_show_form(
+            step_id="label_organization",
+            data_schema=self.add_suggested_values_to_schema(
+                LABEL_ORGANIZATION_SCHEMA,
+                suggested,
+            ),
+            errors=errors,
+        )
+
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -290,8 +410,6 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             user_input[CONF_HOST] = host
             user_input[CONF_PORT] = int(user_input[CONF_PORT])
             user_input[CONF_REQUEST_TIMEOUT] = int(user_input[CONF_REQUEST_TIMEOUT])
-            self._validate_organization(user_input, errors)
-
             await self.async_set_unique_id(host)
             self._abort_if_unique_id_mismatch()
 
@@ -302,26 +420,9 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             else:
-                if errors:
-                    return self.async_show_form(
-                        step_id="reconfigure",
-                        data_schema=self.add_suggested_values_to_schema(
-                            STEP_USER_DATA_SCHEMA, user_input
-                        ),
-                        errors=errors,
-                        description_placeholders={"version": str(version)},
-                    )
-
-                self._resolve_new_area(user_input)
-                self._resolve_new_label(user_input)
-                organization_manager = stored_data.get("organization_manager")
-                if isinstance(organization_manager, FortiOSKDOrganizationManager):
-                    organization_manager.reconfigure(user_input)
-                return self.async_update_reload_and_abort(
-                    entry,
-                    title=f"{host}:{user_input[CONF_PORT]}",
-                    data=user_input,
-                )
+                self._pending_data = dict(entry.data)
+                self._pending_data.update(user_input)
+                return await self._async_continue_organization()
 
         return self.async_show_form(
             step_id="reconfigure",
@@ -344,8 +445,6 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             user_input[CONF_HOST] = host
             user_input[CONF_PORT] = int(user_input[CONF_PORT])
             user_input[CONF_REQUEST_TIMEOUT] = int(user_input[CONF_REQUEST_TIMEOUT])
-            self._validate_organization(user_input, errors)
-
             await self.async_set_unique_id(host)
             self._abort_if_unique_id_configured()
 
@@ -356,20 +455,8 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             else:
-                if errors:
-                    return self.async_show_form(
-                        step_id="user",
-                        data_schema=self.add_suggested_values_to_schema(
-                            STEP_USER_DATA_SCHEMA, user_input
-                        ),
-                        errors=errors,
-                    )
-                self._resolve_new_area(user_input)
-                self._resolve_new_label(user_input)
-                return self.async_create_entry(
-                    title=f"{host}:{user_input[CONF_PORT]}",
-                    data=user_input,
-                )
+                self._pending_data = user_input
+                return await self._async_continue_organization()
 
         return self.async_show_form(
             step_id="user",

@@ -18,15 +18,6 @@
           "host": "Hostname or IP address",
           "include_unassigned_ssids": "Include unassigned SSIDs in filters",
           "organization_mode": "Organize this FortiGate and its devices",
-          "hub_area_id": "Existing FortiGate area",
-          "new_hub_area_name": "New area name (created if it does not exist)",
-          "inherit_hub_area": "Assign this area to hub devices and their entities",
-          "move_devices_if_hub_moves": "Move my devices if the hub moves",
-          "clients_follow_ap_area": "Move wifi clients when their AP moves",
-          "clients_follow_ap_labels": "Keep wifi client labels synchronized with their AP",
-          "hub_label_id": "Existing device label",
-          "new_hub_label_name": "New label name (created if it does not exist)",
-          "hub_label_color": "New label color",
           "request_timeout": "Request timeout",
           "verify_ssl": "Verify SSL certificate",
           "mask_serial_numbers": "Mask serial numbers",
@@ -43,15 +34,6 @@
         "data": {
           "include_unassigned_ssids": "Include unassigned SSIDs in filters",
           "organization_mode": "Organize this FortiGate and its devices",
-          "hub_area_id": "Existing FortiGate area",
-          "new_hub_area_name": "New area name (created if it does not exist)",
-          "inherit_hub_area": "Assign this area to hub devices and their entities",
-          "move_devices_if_hub_moves": "Move my devices if the hub moves",
-          "clients_follow_ap_area": "Move wifi clients when their AP moves",
-          "clients_follow_ap_labels": "Keep wifi client labels synchronized with their AP",
-          "hub_label_id": "Existing device label",
-          "new_hub_label_name": "New label name (created if it does not exist)",
-          "hub_label_color": "New label color",
           "request_timeout": "Request timeout",
           "verify_ssl": "Verify SSL certificate",
           "mask_serial_numbers": "Mask serial numbers",
@@ -63,6 +45,27 @@
         },
         "description": "Detected FortiOS version: {version}",
         "title": "Configure FortiGate"
+      },
+      "area_organization": {
+        "data": {
+          "hub_area_id": "Existing FortiGate area",
+          "new_hub_area_name": "New area name (created if it does not exist)",
+          "inherit_hub_area": "Assign the selected area to AP and wifi client devices",
+          "move_devices_if_hub_moves": "Move managed devices when the FortiGate area changes",
+          "clients_follow_ap_area": "Move wifi clients when their AP area changes"
+        },
+        "description": "Choose an area and how it should be applied to this FortiGate's devices.",
+        "title": "Configure area organization"
+      },
+      "label_organization": {
+        "data": {
+          "hub_label_id": "Existing device label",
+          "new_hub_label_name": "New label name (created if it does not exist)",
+          "hub_label_color": "New label color",
+          "clients_follow_ap_labels": "Keep wifi client labels synchronized with their AP"
+        },
+        "description": "Choose a label and how it should be applied to this FortiGate's devices.",
+        "title": "Configure label organization"
       }
     }
   }

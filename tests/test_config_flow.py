@@ -75,11 +75,6 @@ async def test_user_flow(
         CONF_REQUEST_TIMEOUT: 60,
         CONF_INCLUDE_UNASSIGNED_SSIDS: False,
         CONF_ORGANIZATION_MODE: "none",
-        CONF_INHERIT_HUB_AREA: False,
-        CONF_MOVE_DEVICES_WITH_HUB: False,
-        CONF_CLIENTS_FOLLOW_AP_AREA: False,
-        CONF_CLIENTS_FOLLOW_AP_LABELS: False,
-        CONF_HUB_LABEL_COLOR: [3, 169, 244],
         CONF_MASK_SERIAL_NUMBERS: True,
         CONF_MASK_SSIDS: True,
         CONF_MASK_CLIENT_MACS: True,
@@ -191,6 +186,15 @@ async def test_area_organization_requires_area(
     )
 
     assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "area_organization"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {},
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "area_organization"
     assert result["errors"] == {CONF_HUB_AREA_ID: "area_required"}
 
 
@@ -215,8 +219,15 @@ async def test_area_organization_creates_typed_area(
             CONF_PORT: 8443,
             CONF_VERIFY_SSL: True,
             CONF_ORGANIZATION_MODE: "area",
-            CONF_NEW_HUB_AREA_NAME: "Other House",
         },
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "area_organization"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_NEW_HUB_AREA_NAME: "Other House"},
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -249,6 +260,15 @@ async def test_label_organization_uses_existing_label(
             CONF_PORT: 8443,
             CONF_VERIFY_SSL: True,
             CONF_ORGANIZATION_MODE: "label",
+        },
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "label_organization"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
             CONF_HUB_LABEL_ID: label.label_id,
             CONF_HUB_LABEL_COLOR: [18, 52, 86],
         },
@@ -280,6 +300,15 @@ async def test_label_organization_creates_typed_label(
             CONF_PORT: 8443,
             CONF_VERIFY_SSL: True,
             CONF_ORGANIZATION_MODE: "label",
+        },
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "label_organization"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
             CONF_NEW_HUB_LABEL_NAME: "Other House",
             CONF_HUB_LABEL_COLOR: [18, 52, 86],
         },
@@ -291,3 +320,61 @@ async def test_label_organization_creates_typed_label(
     assert label.color == "#123456"
     assert result["data"][CONF_HUB_LABEL_ID] == label.label_id
     assert CONF_NEW_HUB_LABEL_NAME not in result["data"]
+
+
+async def test_both_organization_uses_area_and_label(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """Test configuring both area and label organization."""
+    area = ar.async_get(hass).async_create("Other House")
+    label = lr.async_get(hass).async_create("The Grains", color="#00CC88")
+    aioclient_mock.get(
+        f"{BASE_URL}/monitor/system/status",
+        json={"version": "v6.4.16", "build": 2098},
+    )
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_HOST: "FGT.Example.Local",
+            CONF_API_KEY: "test-api-key",
+            CONF_PORT: 8443,
+            CONF_VERIFY_SSL: True,
+            CONF_ORGANIZATION_MODE: "both",
+        },
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "area_organization"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_HUB_AREA_ID: area.id,
+            CONF_INHERIT_HUB_AREA: True,
+            CONF_MOVE_DEVICES_WITH_HUB: True,
+            CONF_CLIENTS_FOLLOW_AP_AREA: True,
+        },
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "label_organization"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_HUB_LABEL_ID: label.label_id,
+            CONF_CLIENTS_FOLLOW_AP_LABELS: True,
+        },
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_ORGANIZATION_MODE] == "both"
+    assert result["data"][CONF_HUB_AREA_ID] == area.id
+    assert result["data"][CONF_HUB_LABEL_ID] == label.label_id
+    assert result["data"][CONF_CLIENTS_FOLLOW_AP_AREA] is True
+    assert result["data"][CONF_CLIENTS_FOLLOW_AP_LABELS] is True

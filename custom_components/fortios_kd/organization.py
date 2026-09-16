@@ -24,6 +24,7 @@ from .const import (
     DEFAULT_ORGANIZATION_MODE,
     DOMAIN,
     ORGANIZATION_MODE_AREA,
+    ORGANIZATION_MODE_BOTH,
     ORGANIZATION_MODE_LABEL,
 )
 from .coordinator import FortiOSKDCoordinator
@@ -247,7 +248,10 @@ class FortiOSKDOrganizationManager:
         old_area_id: str | None,
     ) -> None:
         """Store a manual hub move and optionally move managed children."""
-        if self._settings.get(CONF_ORGANIZATION_MODE) != ORGANIZATION_MODE_AREA:
+        if self._settings.get(CONF_ORGANIZATION_MODE) not in (
+            ORGANIZATION_MODE_AREA,
+            ORGANIZATION_MODE_BOTH,
+        ):
             return
 
         updated_data = dict(self._entry.data)
@@ -431,9 +435,9 @@ class FortiOSKDOrganizationManager:
 
     def _configured_area_id(self, settings: Mapping[str, Any]) -> str | None:
         """Return a valid configured area when area mode is active."""
-        if (
-            settings.get(CONF_ORGANIZATION_MODE, DEFAULT_ORGANIZATION_MODE)
-            != ORGANIZATION_MODE_AREA
+        if settings.get(CONF_ORGANIZATION_MODE, DEFAULT_ORGANIZATION_MODE) not in (
+            ORGANIZATION_MODE_AREA,
+            ORGANIZATION_MODE_BOTH,
         ):
             return None
         area_id = settings.get(CONF_HUB_AREA_ID)
@@ -446,9 +450,9 @@ class FortiOSKDOrganizationManager:
         create: bool,
     ) -> str | None:
         """Return the configured label ID, optionally creating the label."""
-        if (
-            settings.get(CONF_ORGANIZATION_MODE, DEFAULT_ORGANIZATION_MODE)
-            != ORGANIZATION_MODE_LABEL
+        if settings.get(CONF_ORGANIZATION_MODE, DEFAULT_ORGANIZATION_MODE) not in (
+            ORGANIZATION_MODE_LABEL,
+            ORGANIZATION_MODE_BOTH,
         ):
             return None
         label_id = settings.get(CONF_HUB_LABEL_ID)
