@@ -3,6 +3,21 @@
 Notable changes and deliberate compatibility, security, and privacy decisions
 are recorded here for each release.
 
+## Unreleased
+
+### Added
+
+- Add optional per-FortiGate device organization using a selected or automatically
+  created Home Assistant area, or a reusable/automatically created label.
+- Add an existing-label picker while retaining the option to create a new label.
+- Add registry-backed area and label filters to the Wifi client dashboard.
+- Add opt-in propagation when a hub or AP changes area while preserving devices
+  that users manually moved elsewhere.
+- Add opt-in synchronization of AP label additions and removals to currently
+  associated wifi clients while preserving unrelated client labels.
+- Add opt-in propagation of FortiGate label additions and removals to all APs
+  and wifi clients managed by that hub, with an explicit broad-change warning.
+
 ## 0.2.2 - 2026-09-15
 
 ### Security

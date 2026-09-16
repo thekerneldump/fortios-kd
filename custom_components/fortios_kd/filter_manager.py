@@ -4,11 +4,22 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from custom_components.fortios_kd.const import DOMAIN
 from custom_components.fortios_kd.coordinator import FortiOSKDCoordinator
 from custom_components.fortios_kd.privacy import mask_name, mask_ssid
 
+from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.helpers import (
+    area_registry as ar,
+    device_registry as dr,
+    label_registry as lr,
+)
+
 FILTER_ALL = "All"
 FILTER_UNAVAILABLE_CLIENTS = "Unavailable Clients"
+FILTER_NO_AREA = "No Area"
+FILTER_NO_LABELS = "No Labels"
+CLIENT_IDENTIFIER_MARKER = "_wifi_client_"
 
 
 @dataclass(slots=True)
@@ -26,14 +37,34 @@ class FortiOSKDFilterHub:
 class FortiOSKDFilterManager:
     """Combine filter data from every configured FortiGate."""
 
-    def __init__(self) -> None:
+    def __init__(self, hass: HomeAssistant) -> None:
         """Initialize the filter manager."""
+        self._hass = hass
+        self._device_registry = dr.async_get(hass)
+        self._area_registry = ar.async_get(hass)
+        self._label_registry = lr.async_get(hass)
         self._hubs: dict[str, FortiOSKDFilterHub] = {}
         self._selected_fortigate = FILTER_ALL
         self._selected_access_point = FILTER_ALL
         self._selected_ssid = FILTER_ALL
+        self._selected_area = FILTER_ALL
+        self._selected_label = FILTER_ALL
         self._listeners: set[Callable[[], None]] = set()
         self._owner_entry_id: str | None = None
+        self._remove_registry_listeners = [
+            hass.bus.async_listen(
+                dr.EVENT_DEVICE_REGISTRY_UPDATED,
+                self._handle_registry_update,
+            ),
+            hass.bus.async_listen(
+                ar.EVENT_AREA_REGISTRY_UPDATED,
+                self._handle_registry_update,
+            ),
+            hass.bus.async_listen(
+                lr.EVENT_LABEL_REGISTRY_UPDATED,
+                self._handle_registry_update,
+            ),
+        ]
 
     def add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
         """Register a filter-state listener."""
@@ -55,7 +86,22 @@ class FortiOSKDFilterManager:
             self._selected_access_point = FILTER_ALL
         if self._selected_ssid not in self.ssid_options:
             self._selected_ssid = FILTER_ALL
+        if self._selected_area not in self.area_options:
+            self._selected_area = FILTER_ALL
+        if self._selected_label not in self.label_options:
+            self._selected_label = FILTER_ALL
         self._notify_listeners()
+
+    @callback
+    def _handle_registry_update(self, _event: Event[Any]) -> None:
+        """Refresh area and label choices after registry changes."""
+        self._handle_coordinator_update()
+
+    def shutdown(self) -> None:
+        """Remove registry listeners owned by this manager."""
+        for remove_listener in self._remove_registry_listeners:
+            remove_listener()
+        self._remove_registry_listeners.clear()
 
     def register_hub(
         self,
@@ -92,6 +138,8 @@ class FortiOSKDFilterManager:
             self._selected_fortigate = FILTER_ALL
             self._selected_access_point = FILTER_ALL
             self._selected_ssid = FILTER_ALL
+            self._selected_area = FILTER_ALL
+            self._selected_label = FILTER_ALL
         self._handle_coordinator_update()
 
     @property
@@ -132,6 +180,8 @@ class FortiOSKDFilterManager:
         self._selected_fortigate = option
         self._selected_access_point = FILTER_ALL
         self._selected_ssid = FILTER_ALL
+        self._selected_area = FILTER_ALL
+        self._selected_label = FILTER_ALL
         self._notify_listeners()
 
     @property
@@ -279,4 +329,82 @@ class FortiOSKDFilterManager:
             self._selected_fortigate = FILTER_ALL
             self._selected_access_point = FILTER_ALL
         self._selected_ssid = option
+        self._notify_listeners()
+
+    def _client_devices(self) -> list[dr.AnyDeviceEntry]:
+        """Return client devices belonging to the selected FortiGate hubs."""
+        devices: list[dr.AnyDeviceEntry] = []
+        for entry_id, hub in self._hubs.items():
+            if self._selected_fortigate not in (FILTER_ALL, hub.name):
+                continue
+            devices.extend(
+                device
+                for device in dr.async_entries_for_config_entry(
+                    self._device_registry,
+                    entry_id,
+                )
+                if any(
+                    domain == DOMAIN and CLIENT_IDENTIFIER_MARKER in identifier
+                    for domain, identifier in device.identifiers
+                )
+            )
+        return devices
+
+    @property
+    def area_options(self) -> list[str]:
+        """Return effective client areas for the selected FortiGate."""
+        names: set[str] = set()
+        has_unassigned = False
+        for device in self._client_devices():
+            area_id = dr.async_get_effective_area_id(self._hass, device)
+            if area_id is None:
+                has_unassigned = True
+                continue
+            if area := self._area_registry.async_get_area(area_id):
+                names.add(area.name)
+
+        options = [FILTER_ALL]
+        if has_unassigned:
+            options.append(FILTER_NO_AREA)
+        return [*options, *sorted(names, key=str.casefold)]
+
+    @property
+    def selected_area(self) -> str:
+        """Return the selected client area."""
+        return self._selected_area
+
+    def select_area(self, option: str) -> None:
+        """Select a client area."""
+        if option not in self.area_options:
+            raise ValueError(f"Unknown area option: {option}")
+        self._selected_area = option
+        self._notify_listeners()
+
+    @property
+    def label_options(self) -> list[str]:
+        """Return client labels for the selected FortiGate."""
+        names: set[str] = set()
+        has_unassigned = False
+        for device in self._client_devices():
+            if not device.labels:
+                has_unassigned = True
+            for label_id in device.labels:
+                if label := self._label_registry.async_get_label(label_id):
+                    names.add(label.name)
+
+        options = [FILTER_ALL]
+        if has_unassigned:
+            options.append(FILTER_NO_LABELS)
+        return [*options, *sorted(names, key=str.casefold)]
+
+    @property
+    def selected_label(self) -> str:
+        """Return the selected client label."""
+        return self._selected_label
+
+    def select_label(self, option: str) -> None:
+        """Select a client label."""
+        if option not in self.label_options:
+            raise ValueError(f"Unknown label option: {option}")
+        self._selected_label = option
         self._notify_listeners()

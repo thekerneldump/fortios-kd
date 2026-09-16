@@ -33,6 +33,7 @@ from .const import (
 )
 from .coordinator import FortiOSKDCoordinator
 from .filter_manager import FortiOSKDFilterManager
+from .organization import FortiOSKDOrganizationManager
 from .privacy import mask_name
 
 _LOGGER = logging.getLogger(__name__)
@@ -69,12 +70,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
 
     domain_data = hass.data.setdefault(DOMAIN, {})
-    manager = domain_data.setdefault(DATA_FILTER_MANAGER, FortiOSKDFilterManager())
+    if not isinstance(
+        manager := domain_data.get(DATA_FILTER_MANAGER),
+        FortiOSKDFilterManager,
+    ):
+        manager = FortiOSKDFilterManager(hass)
+        domain_data[DATA_FILTER_MANAGER] = manager
+    organization_manager = FortiOSKDOrganizationManager(
+        hass,
+        entry,
+        coordinator,
+        str(status.get("serial") or entry.unique_id or entry.entry_id),
+    )
     domain_data[entry.entry_id] = {
         "client": client,
         "status": status,
         "coordinator": coordinator,
+        "organization_manager": organization_manager,
     }
+    organization_manager.setup()
 
     fortigate_hostname = status.get("results", {}).get("hostname") or entry.title
     displayed_fortigate_hostname = (
@@ -111,6 +125,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if next_owner is not None:
             hass.config_entries.async_schedule_reload(next_owner)
         elif not manager.has_hubs:
+            manager.shutdown()
             domain_data.pop(DATA_FILTER_MANAGER)
 
     return unloaded

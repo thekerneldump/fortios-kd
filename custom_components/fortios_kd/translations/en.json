@@ -5,7 +5,11 @@
     },
     "error": {
       "cannot_connect": "Unable to connect to the FortiGate. Check the host, port, and SSL settings.",
-      "invalid_auth": "Invalid API key or insufficient API permissions."
+      "invalid_auth": "Invalid API key or insufficient API permissions.",
+      "area_required": "Select an area when using area organization.",
+      "invalid_area": "The selected area no longer exists.",
+      "label_required": "Select an existing label or enter a new label name when using label organization.",
+      "invalid_label": "The selected label no longer exists."
     },
     "step": {
       "user": {
@@ -13,6 +17,7 @@
           "api_key": "API key",
           "host": "Hostname or IP address",
           "include_unassigned_ssids": "Include unassigned SSIDs in filters",
+          "organization_mode": "Organize this FortiGate and its devices",
           "request_timeout": "Request timeout",
           "verify_ssl": "Verify SSL certificate",
           "mask_serial_numbers": "Mask serial numbers",
@@ -28,10 +33,40 @@
       "reconfigure": {
         "data": {
           "include_unassigned_ssids": "Include unassigned SSIDs in filters",
-          "request_timeout": "Request timeout"
+          "organization_mode": "Organize this FortiGate and its devices",
+          "request_timeout": "Request timeout",
+          "verify_ssl": "Verify SSL certificate",
+          "mask_serial_numbers": "Mask serial numbers",
+          "mask_ssids": "Mask SSIDs",
+          "mask_client_macs": "Mask client MAC addresses",
+          "mask_client_hostnames": "Mask client hostnames",
+          "mask_vlan_ids": "Mask client VLAN IDs",
+          "mask_ap_names": "Mask AP names"
         },
         "description": "Detected FortiOS version: {version}",
         "title": "Configure FortiGate"
+      },
+      "area_organization": {
+        "data": {
+          "hub_area_id": "Existing FortiGate area",
+          "new_hub_area_name": "New area name (created if it does not exist)",
+          "inherit_hub_area": "Assign the selected area to AP and wifi client devices",
+          "move_devices_if_hub_moves": "Move managed devices when the FortiGate area changes",
+          "clients_follow_ap_area": "Move wifi clients when their AP area changes"
+        },
+        "description": "Choose an area and how it should be applied to this FortiGate's devices.",
+        "title": "Configure area organization"
+      },
+      "label_organization": {
+        "data": {
+          "hub_label_id": "Existing device label",
+          "new_hub_label_name": "New label name (created if it does not exist)",
+          "hub_label_color": "New label color",
+          "clients_follow_ap_labels": "Keep wifi client labels synchronized with their AP",
+          "devices_follow_hub_labels": "Propagate FortiGate label changes to APs and wifi clients"
+        },
+        "description": "Choose a label and how it should be applied to this FortiGate's devices.",
+        "title": "Configure label organization"
       }
     }
   }
