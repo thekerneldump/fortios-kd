@@ -132,8 +132,8 @@ When adding a FortiGate, provide:
 
 ### Areas and labels
 
-Each FortiGate can optionally organize its devices using either a Home Assistant
-area or label:
+Each FortiGate can optionally organize its devices using a Home Assistant area,
+label, both, or neither:
 
 - **Area:** Select an existing area or enter a new area name for the integration
   to create. You can also assign the FortiGate's APs and wifi clients to that area,
@@ -146,7 +146,15 @@ area or label:
   label using the selected color; existing labels keep their current color. An
   additional opt-in setting synchronizes labels added to or removed from an AP
   with its currently associated wifi clients while preserving unrelated
-  client-only labels.
+  client-only labels. A separate opt-in setting propagates labels added to or
+  removed from the FortiGate device to all of its managed APs and wifi clients.
+
+> **Warning:** When FortiGate label propagation is enabled, changing a label on
+> the FortiGate device intentionally updates every AP and wifi client managed by
+> that hub. Removing a FortiGate label also removes that label from those managed
+> devices, even if the same label was manually assigned to one of them. Leave the
+> propagation option disabled if FortiGate, AP, or client labels should be managed
+> independently.
 
 Area assignment is optional. Entities inherit their device's area unless an entity
 has been assigned its own area in Home Assistant. Switching to label organization

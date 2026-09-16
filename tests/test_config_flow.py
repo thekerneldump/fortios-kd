@@ -25,6 +25,7 @@ CONF_INHERIT_HUB_AREA = "inherit_hub_area"
 CONF_MOVE_DEVICES_WITH_HUB = "move_devices_if_hub_moves"
 CONF_CLIENTS_FOLLOW_AP_AREA = "clients_follow_ap_area"
 CONF_CLIENTS_FOLLOW_AP_LABELS = "clients_follow_ap_labels"
+CONF_DEVICES_FOLLOW_HUB_LABELS = "devices_follow_hub_labels"
 CONF_HUB_LABEL_ID = "hub_label_id"
 CONF_NEW_HUB_LABEL_NAME = "new_hub_label_name"
 CONF_HUB_LABEL_COLOR = "hub_label_color"
@@ -369,6 +370,7 @@ async def test_both_organization_uses_area_and_label(
         {
             CONF_HUB_LABEL_ID: label.label_id,
             CONF_CLIENTS_FOLLOW_AP_LABELS: True,
+            CONF_DEVICES_FOLLOW_HUB_LABELS: True,
         },
     )
 
@@ -378,3 +380,4 @@ async def test_both_organization_uses_area_and_label(
     assert result["data"][CONF_HUB_LABEL_ID] == label.label_id
     assert result["data"][CONF_CLIENTS_FOLLOW_AP_AREA] is True
     assert result["data"][CONF_CLIENTS_FOLLOW_AP_LABELS] is True
+    assert result["data"][CONF_DEVICES_FOLLOW_HUB_LABELS] is True

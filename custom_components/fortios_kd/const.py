@@ -22,6 +22,8 @@ CONF_CLIENTS_FOLLOW_AP_AREA = "clients_follow_ap_area"
 DEFAULT_CLIENTS_FOLLOW_AP_AREA = False
 CONF_CLIENTS_FOLLOW_AP_LABELS = "clients_follow_ap_labels"
 DEFAULT_CLIENTS_FOLLOW_AP_LABELS = False
+CONF_DEVICES_FOLLOW_HUB_LABELS = "devices_follow_hub_labels"
+DEFAULT_DEVICES_FOLLOW_HUB_LABELS = False
 
 CONF_HUB_LABEL = "hub_label"
 CONF_HUB_LABEL_ID = "hub_label_id"

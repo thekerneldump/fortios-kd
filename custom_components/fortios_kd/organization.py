@@ -10,6 +10,7 @@ from homeassistant.helpers import device_registry as dr, label_registry as lr
 from .const import (
     CONF_CLIENTS_FOLLOW_AP_AREA,
     CONF_CLIENTS_FOLLOW_AP_LABELS,
+    CONF_DEVICES_FOLLOW_HUB_LABELS,
     CONF_HUB_AREA_ID,
     CONF_HUB_LABEL,
     CONF_HUB_LABEL_COLOR,
@@ -19,6 +20,7 @@ from .const import (
     CONF_ORGANIZATION_MODE,
     DEFAULT_CLIENTS_FOLLOW_AP_AREA,
     DEFAULT_CLIENTS_FOLLOW_AP_LABELS,
+    DEFAULT_DEVICES_FOLLOW_HUB_LABELS,
     DEFAULT_INHERIT_HUB_AREA,
     DEFAULT_MOVE_DEVICES_WITH_HUB,
     DEFAULT_ORGANIZATION_MODE,
@@ -101,6 +103,12 @@ class FortiOSKDOrganizationManager:
                 self._add_label(device, new_label_id)
 
         if new_settings.get(
+            CONF_DEVICES_FOLLOW_HUB_LABELS,
+            DEFAULT_DEVICES_FOLLOW_HUB_LABELS,
+        ):
+            self._sync_devices_to_hub_labels()
+
+        if new_settings.get(
             CONF_CLIENTS_FOLLOW_AP_LABELS,
             DEFAULT_CLIENTS_FOLLOW_AP_LABELS,
         ):
@@ -160,6 +168,11 @@ class FortiOSKDOrganizationManager:
         ):
             self._sync_clients_to_ap_areas()
         if self._settings.get(
+            CONF_DEVICES_FOLLOW_HUB_LABELS,
+            DEFAULT_DEVICES_FOLLOW_HUB_LABELS,
+        ):
+            self._sync_devices_to_hub_labels()
+        if self._settings.get(
             CONF_CLIENTS_FOLLOW_AP_LABELS,
             DEFAULT_CLIENTS_FOLLOW_AP_LABELS,
         ):
@@ -202,8 +215,12 @@ class FortiOSKDOrganizationManager:
                 self._handle_hub_area_move(device.area_id, old_area_id)
             elif self._is_ap(device):
                 self._handle_ap_area_move(device, old_area_id)
-        if "labels" in changes and self._is_ap(device):
-            self._handle_ap_label_change(device, set(changes["labels"]))
+        if "labels" in changes:
+            old_labels = set(changes["labels"])
+            if self._is_hub(device):
+                self._handle_hub_label_change(device, old_labels)
+            elif self._is_ap(device):
+                self._handle_ap_label_change(device, old_labels)
 
     @callback
     def _apply_to_new_device(self, device: dr.DeviceEntry) -> None:
@@ -211,6 +228,12 @@ class FortiOSKDOrganizationManager:
         label_id = self._configured_label_id(self._settings, create=True)
         if label_id:
             self._add_label(device, label_id)
+
+        if not self._is_hub(device) and self._settings.get(
+            CONF_DEVICES_FOLLOW_HUB_LABELS,
+            DEFAULT_DEVICES_FOLLOW_HUB_LABELS,
+        ):
+            self._add_hub_labels(device)
 
         if self._is_client(device) and self._settings.get(
             CONF_CLIENTS_FOLLOW_AP_LABELS,
@@ -323,6 +346,54 @@ class FortiOSKDOrganizationManager:
             self._client_ap_labels[client_device.id] = set(ap_device.labels)
             if labels != client_device.labels:
                 self._update_device(client_device, labels=labels)
+
+    @callback
+    def _handle_hub_label_change(
+        self,
+        hub_device: dr.DeviceEntry,
+        old_labels: set[str],
+    ) -> None:
+        """Apply FortiGate label additions and removals to managed devices."""
+        if not self._settings.get(
+            CONF_DEVICES_FOLLOW_HUB_LABELS,
+            DEFAULT_DEVICES_FOLLOW_HUB_LABELS,
+        ):
+            return
+
+        added_labels = hub_device.labels - old_labels
+        removed_labels = old_labels - hub_device.labels
+        for device in self._devices():
+            if self._is_hub(device):
+                continue
+            labels = (device.labels | added_labels) - removed_labels
+            if labels != device.labels:
+                self._update_device(device, labels=labels)
+
+    @callback
+    def _sync_devices_to_hub_labels(self) -> None:
+        """Add all current FortiGate labels to its managed devices."""
+        devices = self._devices()
+        hub = self._hub_device(devices)
+        if hub is None:
+            return
+        for device in devices:
+            if device.id != hub.id:
+                self._add_hub_labels(device, hub)
+
+    @callback
+    def _add_hub_labels(
+        self,
+        device: dr.DeviceEntry,
+        hub: dr.DeviceEntry | None = None,
+    ) -> None:
+        """Add the current FortiGate labels without disturbing other labels."""
+        if hub is None:
+            hub = self._hub_device(self._devices())
+        if hub is None:
+            return
+        labels = device.labels | hub.labels
+        if labels != device.labels:
+            self._update_device(device, labels=labels)
 
     @callback
     def _sync_clients_to_ap_labels(self) -> None:

@@ -15,6 +15,8 @@ are recorded here for each release.
   that users manually moved elsewhere.
 - Add opt-in synchronization of AP label additions and removals to currently
   associated wifi clients while preserving unrelated client labels.
+- Add opt-in propagation of FortiGate label additions and removals to all APs
+  and wifi clients managed by that hub, with an explicit broad-change warning.
 
 ## 0.2.2 - 2026-09-15
 

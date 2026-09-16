@@ -62,7 +62,8 @@
           "hub_label_id": "Existing device label",
           "new_hub_label_name": "New label name (created if it does not exist)",
           "hub_label_color": "New label color",
-          "clients_follow_ap_labels": "Keep wifi client labels synchronized with their AP"
+          "clients_follow_ap_labels": "Keep wifi client labels synchronized with their AP",
+          "devices_follow_hub_labels": "Propagate FortiGate label changes to APs and wifi clients"
         },
         "description": "Choose a label and how it should be applied to this FortiGate's devices.",
         "title": "Configure label organization"

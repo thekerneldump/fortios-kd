@@ -176,3 +176,103 @@ async def test_existing_label_is_applied_to_every_device(
     assert label.label_id in registry.async_get(ap.id).labels
     assert label.label_id in registry.async_get(client.id).labels
     assert registry.async_get(client.id).area_id == office.id
+
+    hub_only_label = label_registry.async_create("Hub only")
+    registry.async_update_device(
+        hub.id,
+        labels=registry.async_get(hub.id).labels | {hub_only_label.label_id},
+    )
+    await hass.async_block_till_done()
+    assert hub_only_label.label_id not in registry.async_get(ap.id).labels
+    assert hub_only_label.label_id not in registry.async_get(client.id).labels
+
+
+async def test_hub_label_changes_propagate_when_enabled(
+    hass: HomeAssistant,
+) -> None:
+    """Test opt-in FortiGate label propagation to APs and clients."""
+    from custom_components.fortios_kd.organization import (  # noqa: PLC0415
+        FortiOSKDOrganizationManager,
+    )
+
+    label_registry = lr.async_get(hass)
+    base_label = label_registry.async_create("Other House")
+    inherited_label = label_registry.async_create("Inherited")
+    ap_only_label = label_registry.async_create("AP only")
+    client_only_label = label_registry.async_create("Client only")
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "organization_mode": "label",
+            "hub_label_id": base_label.label_id,
+            "devices_follow_hub_labels": True,
+        },
+    )
+    entry.add_to_hass(hass)
+    coordinator = SimpleNamespace(
+        data={"wifi_clients": {"results": [{"mac": CLIENT_MAC, "wtp_id": AP_SERIAL}]}},
+        async_add_listener=Mock(return_value=Mock()),
+    )
+    manager = FortiOSKDOrganizationManager(
+        hass,
+        entry,
+        coordinator,
+        FORTIGATE_SERIAL,
+    )
+    manager.setup()
+    registry = dr.async_get(hass)
+    hub = registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, FORTIGATE_SERIAL)},
+    )
+    ap = registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, AP_SERIAL)},
+        via_device_id=hub.id,
+    )
+    client = registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, CLIENT_IDENTIFIER)},
+        via_device_id=hub.id,
+    )
+    await hass.async_block_till_done()
+
+    registry.async_update_device(
+        ap.id,
+        labels=registry.async_get(ap.id).labels | {ap_only_label.label_id},
+    )
+    registry.async_update_device(
+        client.id,
+        labels=registry.async_get(client.id).labels | {client_only_label.label_id},
+    )
+    registry.async_update_device(
+        hub.id,
+        labels=registry.async_get(hub.id).labels | {inherited_label.label_id},
+    )
+    await hass.async_block_till_done()
+
+    assert registry.async_get(ap.id).labels == {
+        base_label.label_id,
+        inherited_label.label_id,
+        ap_only_label.label_id,
+    }
+    assert registry.async_get(client.id).labels == {
+        base_label.label_id,
+        inherited_label.label_id,
+        client_only_label.label_id,
+    }
+
+    registry.async_update_device(
+        hub.id,
+        labels={base_label.label_id},
+    )
+    await hass.async_block_till_done()
+
+    assert registry.async_get(ap.id).labels == {
+        base_label.label_id,
+        ap_only_label.label_id,
+    }
+    assert registry.async_get(client.id).labels == {
+        base_label.label_id,
+        client_only_label.label_id,
+    }
