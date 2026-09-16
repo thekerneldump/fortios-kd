@@ -23,6 +23,8 @@ CONF_CLIENTS_FOLLOW_AP_LABELS = "clients_follow_ap_labels"
 DEFAULT_CLIENTS_FOLLOW_AP_LABELS = False
 
 CONF_HUB_LABEL = "hub_label"
+CONF_HUB_LABEL_ID = "hub_label_id"
+CONF_NEW_HUB_LABEL_NAME = "new_hub_label_name"
 CONF_HUB_LABEL_COLOR = "hub_label_color"
 DEFAULT_HUB_LABEL_COLOR = [3, 169, 244]
 

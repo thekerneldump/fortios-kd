@@ -8,7 +8,8 @@
       "invalid_auth": "Invalid API key or insufficient API permissions.",
       "area_required": "Select an area when using area organization.",
       "invalid_area": "The selected area no longer exists.",
-      "label_required": "Enter a label name when using label organization."
+      "label_required": "Select an existing label or enter a new label name when using label organization.",
+      "invalid_label": "The selected label no longer exists."
     },
     "step": {
       "user": {
@@ -23,7 +24,8 @@
           "move_devices_if_hub_moves": "Move my devices if the hub moves",
           "clients_follow_ap_area": "Move wifi clients when their AP moves",
           "clients_follow_ap_labels": "Keep wifi client labels synchronized with their AP",
-          "hub_label": "Device label name",
+          "hub_label_id": "Existing device label",
+          "new_hub_label_name": "New label name (created if it does not exist)",
           "hub_label_color": "New label color",
           "request_timeout": "Request timeout",
           "verify_ssl": "Verify SSL certificate",
@@ -47,7 +49,8 @@
           "move_devices_if_hub_moves": "Move my devices if the hub moves",
           "clients_follow_ap_area": "Move wifi clients when their AP moves",
           "clients_follow_ap_labels": "Keep wifi client labels synchronized with their AP",
-          "hub_label": "Device label name",
+          "hub_label_id": "Existing device label",
+          "new_hub_label_name": "New label name (created if it does not exist)",
           "hub_label_color": "New label color",
           "request_timeout": "Request timeout",
           "verify_ssl": "Verify SSL certificate",

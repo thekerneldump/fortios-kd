@@ -13,6 +13,7 @@ from .const import (
     CONF_HUB_AREA_ID,
     CONF_HUB_LABEL,
     CONF_HUB_LABEL_COLOR,
+    CONF_HUB_LABEL_ID,
     CONF_INHERIT_HUB_AREA,
     CONF_MOVE_DEVICES_WITH_HUB,
     CONF_ORGANIZATION_MODE,
@@ -450,6 +451,15 @@ class FortiOSKDOrganizationManager:
             != ORGANIZATION_MODE_LABEL
         ):
             return None
+        label_id = settings.get(CONF_HUB_LABEL_ID)
+        if (
+            isinstance(label_id, str)
+            and label_id
+            and self._label_registry.async_get_label(label_id) is not None
+        ):
+            return label_id
+
+        # Retain compatibility with entries created before label selectors stored IDs.
         name = settings.get(CONF_HUB_LABEL)
         if not isinstance(name, str) or not (name := name.strip()):
             return None

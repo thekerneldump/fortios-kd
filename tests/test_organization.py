@@ -121,19 +121,21 @@ async def test_area_moves_preserve_manual_device_areas(
     assert entry.data["hub_area_id"] == office.id
 
 
-async def test_label_is_created_and_applied_to_every_device(
+async def test_existing_label_is_applied_to_every_device(
     hass: HomeAssistant,
 ) -> None:
-    """Test label creation, color conversion, and device assignment."""
+    """Test selected-label reuse and device assignment."""
     from custom_components.fortios_kd.organization import (  # noqa: PLC0415
         FortiOSKDOrganizationManager,
     )
 
+    label_registry = lr.async_get(hass)
+    label = label_registry.async_create("Other House", color="#ABCDEF")
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
             "organization_mode": "label",
-            "hub_label": "Other House",
+            "hub_label_id": label.label_id,
             "hub_label_color": [18, 52, 86],
             "clients_follow_ap_area": True,
         },
@@ -169,9 +171,7 @@ async def test_label_is_created_and_applied_to_every_device(
     )
     await hass.async_block_till_done()
 
-    label = lr.async_get(hass).async_get_label_by_name("Other House")
-    assert label is not None
-    assert label.color == "#123456"
+    assert label_registry.async_get_label(label.label_id).color == "#ABCDEF"
     assert label.label_id in registry.async_get(hub.id).labels
     assert label.label_id in registry.async_get(ap.id).labels
     assert label.label_id in registry.async_get(client.id).labels

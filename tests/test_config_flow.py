@@ -4,7 +4,7 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_PORT, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
-from homeassistant.helpers import area_registry as ar
+from homeassistant.helpers import area_registry as ar, label_registry as lr
 from tests.common import MockConfigEntry  # noqa: TID251
 from tests.test_util.aiohttp import AiohttpClientMocker  # noqa: TID251
 
@@ -25,6 +25,8 @@ CONF_INHERIT_HUB_AREA = "inherit_hub_area"
 CONF_MOVE_DEVICES_WITH_HUB = "move_devices_if_hub_moves"
 CONF_CLIENTS_FOLLOW_AP_AREA = "clients_follow_ap_area"
 CONF_CLIENTS_FOLLOW_AP_LABELS = "clients_follow_ap_labels"
+CONF_HUB_LABEL_ID = "hub_label_id"
+CONF_NEW_HUB_LABEL_NAME = "new_hub_label_name"
 CONF_HUB_LABEL_COLOR = "hub_label_color"
 
 
@@ -222,3 +224,70 @@ async def test_area_organization_creates_typed_area(
     assert area is not None
     assert result["data"][CONF_HUB_AREA_ID] == area.id
     assert CONF_NEW_HUB_AREA_NAME not in result["data"]
+
+
+async def test_label_organization_uses_existing_label(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """Test that selecting a label stores its ID without changing its color."""
+    label_registry = lr.async_get(hass)
+    label = label_registry.async_create("Other House", color="#ABCDEF")
+    aioclient_mock.get(
+        f"{BASE_URL}/monitor/system/status",
+        json={"version": "v6.4.16", "build": 2098},
+    )
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_HOST: "FGT.Example.Local",
+            CONF_API_KEY: "test-api-key",
+            CONF_PORT: 8443,
+            CONF_VERIFY_SSL: True,
+            CONF_ORGANIZATION_MODE: "label",
+            CONF_HUB_LABEL_ID: label.label_id,
+            CONF_HUB_LABEL_COLOR: [18, 52, 86],
+        },
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_HUB_LABEL_ID] == label.label_id
+    assert label_registry.async_get_label(label.label_id).color == "#ABCDEF"
+
+
+async def test_label_organization_creates_typed_label(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """Test that a typed label is created and stored by ID."""
+    aioclient_mock.get(
+        f"{BASE_URL}/monitor/system/status",
+        json={"version": "v6.4.16", "build": 2098},
+    )
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_HOST: "FGT.Example.Local",
+            CONF_API_KEY: "test-api-key",
+            CONF_PORT: 8443,
+            CONF_VERIFY_SSL: True,
+            CONF_ORGANIZATION_MODE: "label",
+            CONF_NEW_HUB_LABEL_NAME: "Other House",
+            CONF_HUB_LABEL_COLOR: [18, 52, 86],
+        },
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    label = lr.async_get(hass).async_get_label_by_name("Other House")
+    assert label is not None
+    assert label.color == "#123456"
+    assert result["data"][CONF_HUB_LABEL_ID] == label.label_id
+    assert CONF_NEW_HUB_LABEL_NAME not in result["data"]

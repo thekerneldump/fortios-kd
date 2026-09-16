@@ -140,11 +140,13 @@ area or label:
   move still-managed devices when the FortiGate moves, and move clients with an AP
   when its area changes. Devices manually moved away from the previously managed
   area are left alone.
-- **Label:** Enter a label name to apply to the FortiGate, APs, and wifi clients.
-  The integration reuses an existing label with that name or creates one using the
-  selected color. Existing labels keep their current color. An additional opt-in
-  setting synchronizes labels added to or removed from an AP with its currently
-  associated wifi clients while preserving unrelated client-only labels.
+- **Label:** Select an existing label or enter a new label name to apply to the
+  FortiGate, APs, and wifi clients. The picker avoids accidentally creating a
+  misspelled duplicate. A typed name reuses an exact existing match or creates a
+  label using the selected color; existing labels keep their current color. An
+  additional opt-in setting synchronizes labels added to or removed from an AP
+  with its currently associated wifi clients while preserving unrelated
+  client-only labels.
 
 Area assignment is optional. Entities inherit their device's area unless an entity
 has been assigned its own area in Home Assistant. Switching to label organization

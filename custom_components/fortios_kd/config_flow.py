@@ -9,7 +9,7 @@ from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_PORT, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import area_registry as ar, selector
+from homeassistant.helpers import area_registry as ar, label_registry as lr, selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import FortiOSApi
@@ -19,6 +19,7 @@ from .const import (
     CONF_HUB_AREA_ID,
     CONF_HUB_LABEL,
     CONF_HUB_LABEL_COLOR,
+    CONF_HUB_LABEL_ID,
     CONF_INCLUDE_UNASSIGNED_SSIDS,
     CONF_INHERIT_HUB_AREA,
     CONF_MASK_AP_NAMES,
@@ -29,6 +30,7 @@ from .const import (
     CONF_MASK_VLAN_IDS,
     CONF_MOVE_DEVICES_WITH_HUB,
     CONF_NEW_HUB_AREA_NAME,
+    CONF_NEW_HUB_LABEL_NAME,
     CONF_ORGANIZATION_MODE,
     CONF_REQUEST_TIMEOUT,
     DEFAULT_CLIENTS_FOLLOW_AP_AREA,
@@ -119,7 +121,8 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
             CONF_CLIENTS_FOLLOW_AP_LABELS,
             default=DEFAULT_CLIENTS_FOLLOW_AP_LABELS,
         ): selector.BooleanSelector(),
-        vol.Optional(CONF_HUB_LABEL): selector.TextSelector(),
+        vol.Optional(CONF_HUB_LABEL_ID): selector.LabelSelector(),
+        vol.Optional(CONF_NEW_HUB_LABEL_NAME): selector.TextSelector(),
         vol.Optional(
             CONF_HUB_LABEL_COLOR,
             default=DEFAULT_HUB_LABEL_COLOR,
@@ -158,6 +161,15 @@ class CannotConnect(Exception):
 
 class InvalidAuth(Exception):
     """Error to indicate invalid authentication."""
+
+
+def _rgb_to_hex(value: Any) -> str | None:
+    """Convert a selector RGB list to a label-registry hex color."""
+    if not isinstance(value, list) or len(value) != 3:
+        return None
+    if not all(isinstance(channel, int) and 0 <= channel <= 255 for channel in value):
+        return None
+    return "#{:02X}{:02X}{:02X}".format(*value)
 
 
 async def async_validate_input(
@@ -211,10 +223,17 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors[CONF_HUB_AREA_ID] = "invalid_area"
 
         if mode == ORGANIZATION_MODE_LABEL:
-            label_name = str(user_input.get(CONF_HUB_LABEL, "")).strip()
-            user_input[CONF_HUB_LABEL] = label_name
-            if not label_name:
-                errors[CONF_HUB_LABEL] = "label_required"
+            label_id = user_input.get(CONF_HUB_LABEL_ID)
+            new_label_name = str(user_input.get(CONF_NEW_HUB_LABEL_NAME, "")).strip()
+            user_input[CONF_NEW_HUB_LABEL_NAME] = new_label_name
+            if not label_id and not new_label_name:
+                errors[CONF_HUB_LABEL_ID] = "label_required"
+            elif (
+                label_id
+                and not new_label_name
+                and lr.async_get(self.hass).async_get_label(label_id) is None
+            ):
+                errors[CONF_HUB_LABEL_ID] = "invalid_label"
 
     def _resolve_new_area(self, user_input: dict[str, Any]) -> None:
         """Create or reuse a typed area name and store its area ID."""
@@ -226,6 +245,35 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if new_area_name:
             area = ar.async_get(self.hass).async_get_or_create(new_area_name)
             user_input[CONF_HUB_AREA_ID] = area.id
+
+    def _resolve_new_label(self, user_input: dict[str, Any]) -> None:
+        """Create or reuse a typed label name and store its label ID."""
+        if user_input[CONF_ORGANIZATION_MODE] != ORGANIZATION_MODE_LABEL:
+            user_input.pop(CONF_NEW_HUB_LABEL_NAME, None)
+            return
+
+        new_label_name = user_input.pop(CONF_NEW_HUB_LABEL_NAME, "")
+        if new_label_name:
+            label_registry = lr.async_get(self.hass)
+            label = label_registry.async_get_label_by_name(new_label_name)
+            if label is None:
+                label = label_registry.async_create(
+                    new_label_name,
+                    color=_rgb_to_hex(user_input.get(CONF_HUB_LABEL_COLOR)),
+                )
+            user_input[CONF_HUB_LABEL_ID] = label.label_id
+        user_input.pop(CONF_HUB_LABEL, None)
+
+    def _organization_suggested_values(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Return settings with legacy label names represented by label IDs."""
+        suggested = dict(data)
+        if CONF_HUB_LABEL_ID not in suggested:
+            label_name = suggested.get(CONF_HUB_LABEL)
+            if isinstance(label_name, str):
+                label = lr.async_get(self.hass).async_get_label_by_name(label_name)
+                if label is not None:
+                    suggested[CONF_HUB_LABEL_ID] = label.label_id
+        return suggested
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
@@ -265,6 +313,7 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
 
                 self._resolve_new_area(user_input)
+                self._resolve_new_label(user_input)
                 organization_manager = stored_data.get("organization_manager")
                 if isinstance(organization_manager, FortiOSKDOrganizationManager):
                     organization_manager.reconfigure(user_input)
@@ -277,7 +326,8 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="reconfigure",
             data_schema=self.add_suggested_values_to_schema(
-                STEP_USER_DATA_SCHEMA, user_input or entry.data
+                STEP_USER_DATA_SCHEMA,
+                self._organization_suggested_values(user_input or dict(entry.data)),
             ),
             errors=errors,
             description_placeholders={"version": str(version)},
@@ -315,6 +365,7 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         errors=errors,
                     )
                 self._resolve_new_area(user_input)
+                self._resolve_new_label(user_input)
                 return self.async_create_entry(
                     title=f"{host}:{user_input[CONF_PORT]}",
                     data=user_input,
