@@ -70,7 +70,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
 
     domain_data = hass.data.setdefault(DOMAIN, {})
-    manager = domain_data.setdefault(DATA_FILTER_MANAGER, FortiOSKDFilterManager())
+    if not isinstance(
+        manager := domain_data.get(DATA_FILTER_MANAGER),
+        FortiOSKDFilterManager,
+    ):
+        manager = FortiOSKDFilterManager(hass)
+        domain_data[DATA_FILTER_MANAGER] = manager
     organization_manager = FortiOSKDOrganizationManager(
         hass,
         entry,
@@ -120,6 +125,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if next_owner is not None:
             hass.config_entries.async_schedule_reload(next_owner)
         elif not manager.has_hubs:
+            manager.shutdown()
             domain_data.pop(DATA_FILTER_MANAGER)
 
     return unloaded

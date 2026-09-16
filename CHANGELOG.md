@@ -10,6 +10,7 @@ are recorded here for each release.
 - Add optional per-FortiGate device organization using a selected or automatically
   created Home Assistant area, or a reusable/automatically created label.
 - Add an existing-label picker while retaining the option to create a new label.
+- Add registry-backed area and label filters to the Wifi client dashboard.
 - Add opt-in propagation when a hub or AP changes area while preserving devices
   that users manually moved elsewhere.
 - Add opt-in synchronization of AP label additions and removals to currently

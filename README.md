@@ -157,6 +157,10 @@ detected FortiOS version is displayed when an existing hub is reconfigured.
 Invalid or insufficient API credentials are reported in the configuration form
 without replacing the previously working key.
 
+The included Wifi client dashboard provides FortiGate, AP, SSID, area, and label
+filters. Area and label choices come from the Home Assistant device registry, so
+they also cover retained client devices that are currently unavailable.
+
 ## Privacy masking
 
 Privacy controls are configured independently for each FortiGate hub:

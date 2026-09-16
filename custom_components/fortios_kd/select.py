@@ -26,6 +26,8 @@ async def async_setup_entry(
             FortiOSKDFilterSelect(manager, "fortigate"),
             FortiOSKDFilterSelect(manager, "access_point"),
             FortiOSKDFilterSelect(manager, "ssid"),
+            FortiOSKDFilterSelect(manager, "area"),
+            FortiOSKDFilterSelect(manager, "label"),
         ]
     )
 
@@ -48,11 +50,15 @@ class FortiOSKDFilterSelect(SelectEntity):
             "fortigate": "Wifi Client FortiGate Filter",
             "access_point": "Wifi Client AP Filter",
             "ssid": "Wifi Client SSID Filter",
+            "area": "Wifi Client Area Filter",
+            "label": "Wifi Client Label Filter",
         }[filter_type]
         self._attr_icon = {
             "fortigate": "mdi:shield-router",
             "access_point": "mdi:access-point-network",
             "ssid": "mdi:wifi",
+            "area": "mdi:floor-plan",
+            "label": "mdi:label",
         }[filter_type]
 
     @property
@@ -63,7 +69,11 @@ class FortiOSKDFilterSelect(SelectEntity):
             return self._manager.fortigate_options
         if self._filter_type == "access_point":
             return self._manager.access_point_options
-        return self._manager.ssid_options
+        if self._filter_type == "ssid":
+            return self._manager.ssid_options
+        if self._filter_type == "area":
+            return self._manager.area_options
+        return self._manager.label_options
 
     @property
     @override
@@ -73,7 +83,11 @@ class FortiOSKDFilterSelect(SelectEntity):
             return self._manager.selected_fortigate
         if self._filter_type == "access_point":
             return self._manager.selected_access_point
-        return self._manager.selected_ssid
+        if self._filter_type == "ssid":
+            return self._manager.selected_ssid
+        if self._filter_type == "area":
+            return self._manager.selected_area
+        return self._manager.selected_label
 
     @override
     async def async_select_option(self, option: str) -> None:
@@ -82,8 +96,12 @@ class FortiOSKDFilterSelect(SelectEntity):
             self._manager.select_fortigate(option)
         elif self._filter_type == "access_point":
             self._manager.select_access_point(option)
-        else:
+        elif self._filter_type == "ssid":
             self._manager.select_ssid(option)
+        elif self._filter_type == "area":
+            self._manager.select_area(option)
+        else:
+            self._manager.select_label(option)
 
     @override
     async def async_added_to_hass(self) -> None:
