@@ -5,6 +5,8 @@ are recorded here for each release.
 
 ## Unreleased
 
+## 0.3.0 - 2026-09-16
+
 ### Added
 
 - Add an automatically populated Wifi graph community dashboard with shared
