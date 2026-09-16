@@ -3,6 +3,7 @@
   "name": "FortiOS KD",
   "codeowners": ["@thekerneldump"],
   "config_flow": true,
+  "dependencies": ["frontend", "http"],
   "documentation": "https://github.com/thekerneldump/fortios-kd",
   "integration_type": "hub",
   "iot_class": "local_polling",

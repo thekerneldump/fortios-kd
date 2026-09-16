@@ -213,6 +213,8 @@ FortiOS KD creates these shared select entities:
 - `select.wifi_client_fortigate_filter`
 - `select.wifi_client_ap_filter`
 - `select.wifi_client_ssid_filter`
+- `select.wifi_client_area_filter`
+- `select.wifi_client_label_filter`
 
 Selecting a FortiGate limits the AP and SSID choices to that hub. The SSID filter
 also includes **Unavailable Clients**, which displays clients that are no longer
@@ -220,15 +222,32 @@ reported as associated. Their Last Known MAC remains available immediately. Last
 Known Hostname begins retaining a value after FortiOS KD observes that client
 with a valid hostname.
 
-The example dashboard requires the
+The Wifi client dashboard requires the
 [auto-entities](https://github.com/thomasloven/lovelace-auto-entities) and
 [layout-card](https://github.com/thomasloven/lovelace-layout-card) frontend
 cards, both of which can be installed through HACS.
 
-After installing those cards, copy the complete
-[Wifi client dashboard example](docs/wifi-clients-dashboard.yaml) into a new
-dashboard's raw configuration editor. It automatically adapts the number of
-client columns to the available screen width.
+### Community dashboard
+
+On Home Assistant 2026.5 or newer, FortiOS KD registers a community dashboard
+strategy automatically. After installing the two required frontend cards and
+restarting Home Assistant:
+
+1. Open **Settings > Dashboards**.
+2. Select **Add dashboard**.
+3. Choose **FortiOS KD Wifi Clients** under **Community dashboards**.
+4. Confirm or customize the suggested **KD Wifi Clients** title,
+   `kd-wifi-clients` URL, and icon.
+
+The generated dashboard automatically adapts the number of client columns to
+the available screen width. Its configuration remains managed by the strategy;
+use the manual dashboard when you want to customize individual cards.
+
+### Manual dashboard
+
+For older Home Assistant releases or a fully editable dashboard, copy the
+complete [Wifi client dashboard example](docs/wifi-clients-dashboard.yaml) into
+a new dashboard's raw configuration editor.
 
 ## Troubleshooting
 

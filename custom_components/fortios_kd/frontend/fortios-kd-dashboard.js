@@ -1,0 +1,300 @@
+const CLIENT_CARD_TEMPLATE = String.raw`
+{% set ns = namespace(cards=[]) %}
+
+{% set selected_fortigate =
+  states('select.wifi_client_fortigate_filter') %}
+{% set selected_ap =
+  states('select.wifi_client_ap_filter') %}
+{% set selected_ssid =
+  states('select.wifi_client_ssid_filter') %}
+{% set selected_area =
+  states('select.wifi_client_area_filter') %}
+{% set selected_label =
+  states('select.wifi_client_label_filter') %}
+
+{% for mac in states.sensor | sort(attribute='entity_id') %}
+  {% if mac.entity_id.startswith('sensor.wifi_client_')
+        and mac.entity_id.endswith('_mac_address') %}
+
+    {% set base =
+      mac.entity_id | replace('_mac_address', '') %}
+    {% set hostname = states(base ~ '_hostname') %}
+    {% set last_known_hostname =
+      states(base ~ '_last_known_hostname') %}
+    {% set fortigate = states(base ~ '_fortigate') %}
+    {% set ap = states(base ~ '_ap_name') %}
+    {% set ssid = states(base ~ '_ssid') %}
+    {% set client_device_id = device_id(mac.entity_id) %}
+    {% set client_area = area_name(mac.entity_id) %}
+
+    {% if ap not in
+          ['unknown', 'unavailable', 'none', ''] %}
+      {% set ap_device_id = device_id(ap) %}
+    {% else %}
+      {% set ap_device_id = none %}
+    {% endif %}
+
+    {% set label_ns = namespace(names=[]) %}
+    {% if client_device_id %}
+      {% for label_id in labels(client_device_id) %}
+        {% set current_label_name = label_name(label_id) %}
+        {% if current_label_name %}
+          {% set label_ns.names =
+            label_ns.names + [current_label_name] %}
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+
+    {% set area_text = client_area or 'No Area' %}
+    {% if label_ns.names %}
+      {% set label_text =
+        label_ns.names | unique | sort | join(', ') %}
+    {% else %}
+      {% set label_text = 'No Labels' %}
+    {% endif %}
+
+    {% set fortigate_matches =
+      selected_fortigate in
+        ['All', 'unknown', 'unavailable', 'none', '']
+      or fortigate == selected_fortigate
+    %}
+    {% set ap_matches =
+      selected_ap in
+        ['All', 'unknown', 'unavailable', 'none', '']
+      or ap == selected_ap
+    %}
+    {% set unavailable_mode =
+      selected_ssid == 'Unavailable Clients'
+    %}
+    {% set ssid_matches =
+      (
+        unavailable_mode
+        and mac.state == 'unavailable'
+      )
+      or
+      (
+        not unavailable_mode
+        and (
+          selected_ssid in
+            ['All', 'unknown', 'unavailable', 'none', '']
+          or ssid == selected_ssid
+        )
+      )
+    %}
+    {% set area_matches =
+      selected_area in
+        ['All', 'unknown', 'unavailable', 'none', '']
+      or (
+        selected_area == 'No Area'
+        and not client_area
+      )
+      or client_area == selected_area
+    %}
+    {% set label_matches =
+      selected_label in
+        ['All', 'unknown', 'unavailable', 'none', '']
+      or (
+        selected_label == 'No Labels'
+        and not label_ns.names
+      )
+      or selected_label in label_ns.names
+    %}
+
+    {% if fortigate_matches
+          and ap_matches
+          and ssid_matches
+          and area_matches
+          and label_matches %}
+
+      {% if hostname not in
+            ['unknown', 'unavailable', 'none', ''] %}
+        {% set title = hostname %}
+      {% elif last_known_hostname not in
+            ['unknown', 'unavailable', 'none', ''] %}
+        {% set title = last_known_hostname %}
+      {% else %}
+        {% set title = 'Wifi Client' %}
+      {% endif %}
+
+      {% set link_ns = namespace(rows=[]) %}
+      {% if client_device_id %}
+        {% set link_ns.rows = link_ns.rows + [{
+          'type': 'button',
+          'name': title,
+          'icon': 'mdi:devices',
+          'action_name': 'Open client',
+          'tap_action': {
+            'action': 'navigate',
+            'navigation_path':
+              '/config/devices/device/' ~ client_device_id
+          }
+        }] %}
+      {% endif %}
+      {% if ap_device_id %}
+        {% set link_ns.rows = link_ns.rows + [{
+          'type': 'button',
+          'name': ap,
+          'icon': 'mdi:access-point-network',
+          'action_name': 'Open AP',
+          'tap_action': {
+            'action': 'navigate',
+            'navigation_path':
+              '/config/devices/device/' ~ ap_device_id
+          }
+        }] %}
+      {% endif %}
+
+      {% set ns.cards = ns.cards + [{
+        'type': 'entities',
+        'title': title,
+        'entities': link_ns.rows + [
+          {
+            'type': 'section',
+            'label': 'Area: ' ~ area_text
+          },
+          {
+            'type': 'section',
+            'label': 'Labels: ' ~ label_text
+          },
+          {
+            'entity': mac.entity_id,
+            'name': 'MAC address'
+          },
+          {
+            'entity': base ~ '_last_known_mac',
+            'name': 'Last Known MAC'
+          },
+          {
+            'entity': base ~ '_ip_address',
+            'name': 'IP address'
+          },
+          {
+            'entity': base ~ '_fortigate',
+            'name': 'FortiGate'
+          },
+          {
+            'entity': base ~ '_ap_name',
+            'name': 'Access point'
+          },
+          {
+            'entity': base ~ '_ssid',
+            'name': 'SSID'
+          },
+          {
+            'entity': base ~ '_hostname',
+            'name': 'Hostname'
+          },
+          {
+            'entity': base ~ '_last_known_hostname',
+            'name': 'Last Known Hostname'
+          },
+          {
+            'entity': base ~ '_signal',
+            'name': 'Signal strength'
+          }
+        ]
+      }] %}
+    {% endif %}
+  {% endif %}
+{% endfor %}
+
+{{ ns.cards }}
+`;
+
+class FortiOSKDDashboardStrategy extends HTMLElement {
+  static getCreateSuggestions(_hass) {
+    return {
+      title: "KD Wifi Clients",
+      icon: "mdi:access-point-network",
+    };
+  }
+
+  static async generate(config, _hass) {
+    return {
+      title: config.title || "KD Wifi Clients",
+      views: [
+        {
+          title: "Wifi Clients",
+          path: "wifi-clients",
+          type: "sections",
+          max_columns: 4,
+          sections: [
+            {
+              type: "grid",
+              column_span: 4,
+              cards: [
+                {
+                  type: "heading",
+                  heading: "Wifi Clients",
+                  heading_style: "title",
+                },
+                {
+                  type: "entities",
+                  title: "Client Filters",
+                  entities: [
+                    {
+                      entity: "select.wifi_client_fortigate_filter",
+                      name: "FortiGate",
+                    },
+                    {
+                      entity: "select.wifi_client_ap_filter",
+                      name: "Access point",
+                    },
+                    {
+                      entity: "select.wifi_client_ssid_filter",
+                      name: "SSID",
+                    },
+                    {
+                      entity: "select.wifi_client_area_filter",
+                      name: "Area",
+                    },
+                    {
+                      entity: "select.wifi_client_label_filter",
+                      name: "Label",
+                    },
+                  ],
+                  grid_options: { columns: "full" },
+                },
+                {
+                  type: "custom:auto-entities",
+                  card: {
+                    type: "custom:layout-card",
+                    layout_type: "custom:grid-layout",
+                    layout: {
+                      "grid-template-columns":
+                        "repeat(auto-fit, minmax(300px, 1fr))",
+                      "grid-gap": "8px",
+                    },
+                  },
+                  card_param: "cards",
+                  filter: { template: CLIENT_CARD_TEMPLATE },
+                  grid_options: { columns: "full" },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+  }
+}
+
+const STRATEGY_ELEMENT = "ll-strategy-dashboard-fortios-kd";
+
+if (!customElements.get(STRATEGY_ELEMENT)) {
+  customElements.define(STRATEGY_ELEMENT, FortiOSKDDashboardStrategy);
+}
+
+window.customStrategies = window.customStrategies || [];
+
+if (!window.customStrategies.some((strategy) => strategy.type === "fortios-kd")) {
+  window.customStrategies.push({
+    type: "fortios-kd",
+    strategyType: "dashboard",
+    name: "FortiOS KD Wifi Clients",
+    description:
+      "Explore FortiGate wifi clients with hub, AP, SSID, area, and label filters.",
+    documentationURL:
+      "https://github.com/thekerneldump/fortios-kd#community-dashboard",
+  });
+}
