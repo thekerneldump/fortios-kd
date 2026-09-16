@@ -15,6 +15,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.typing import ConfigType
 
 from .api import FortiOSApi
 from .const import (
@@ -33,11 +34,18 @@ from .const import (
 )
 from .coordinator import FortiOSKDCoordinator
 from .filter_manager import FortiOSKDFilterManager
+from .frontend import async_register_dashboard_strategy
 from .organization import FortiOSKDOrganizationManager
 from .privacy import mask_name
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = [Platform.SENSOR, Platform.SELECT]
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register integration-wide frontend resources."""
+    await async_register_dashboard_strategy(hass)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

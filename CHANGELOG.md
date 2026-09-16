@@ -7,6 +7,8 @@ are recorded here for each release.
 
 ### Added
 
+- Add an automatically registered community dashboard strategy for Home
+  Assistant 2026.5 and newer, while retaining the editable YAML dashboard.
 - Add optional per-FortiGate device organization using a selected or automatically
   created Home Assistant area, or a reusable/automatically created label.
 - Add an existing-label picker while retaining the option to create a new label.

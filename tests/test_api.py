@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
+from homeassistant.components.frontend import DATA_EXTRA_MODULE_URL
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_PORT, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
@@ -79,6 +80,10 @@ async def test_monitor_api(
         await hass.async_block_till_done()
 
     assert entry.state is ConfigEntryState.LOADED
+    assert any(
+        url.startswith("/fortios_kd/fortios-kd-dashboard.js?v=")
+        for url in hass.data[DATA_EXTRA_MODULE_URL].urls
+    )
     assert hass.data[DOMAIN][entry.entry_id]["status"] == status
     api = hass.data[DOMAIN][entry.entry_id]["client"]
     assert api.version is not None
