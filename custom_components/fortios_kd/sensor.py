@@ -17,7 +17,7 @@ from homeassistant.const import (
     UnitOfInformation,
     UnitOfTime,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -89,6 +89,7 @@ RADIO_TYPE_BANDS = {
     "802.11n": "2.4 GHz",
     "802.11n,g-only": "2.4 GHz",
     "802.11ax,n,g-only": "2.4 GHz",
+    "802.11ac": "5 GHz",
     "802.11ac,n-only": "5 GHz",
     "802.11ac-only": "5 GHz",
     "802.11ax-5G-only": "5 GHz",
@@ -788,6 +789,10 @@ class FortiGateAPClients(CoordinatorEntity[FortiOSKDCoordinator], SensorEntity):
         self._attr_unique_id = f"{self._serial}_clients"
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_native_unit_of_measurement = "clients"
+        self._attr_extra_state_attributes = {
+            "fortios_kd_metric": "clients",
+            "fortios_kd_scope": "ap",
+        }
 
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, self._serial)},
@@ -898,6 +903,8 @@ class FortiGateAPRadioSSIDs(SensorEntity):
         self._attr_extra_state_attributes = {
             "count": len(ssids),
             "ssids": ssids,
+            "fortios_kd_radio_id": radio_id,
+            "fortios_kd_band": band,
         }
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, serial)},
@@ -933,13 +940,13 @@ class FortiGateAPRadioMetric(
         self._radio_id = radio["radio_id"]
         self._field = field
         self._radio_object_id = f"Radio {self._radio_id} {label}"
-        band = RADIO_TYPE_BANDS.get(
+        self._band = RADIO_TYPE_BANDS.get(
             radio.get("radio_type"),
             f"Radio {self._radio_id}",
         )
 
         self._attr_unique_id = f"{self._serial}_radio_{self._radio_id}_{field}"
-        self._attr_name = f"{band} {label}"
+        self._attr_name = f"{self._band} {label}"
         self._attr_icon = icon
         self._attr_native_unit_of_measurement = unit
         self._attr_device_class = device_class
@@ -948,6 +955,12 @@ class FortiGateAPRadioMetric(
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, self._serial)},
         )
+        self._attr_extra_state_attributes = {
+            "fortios_kd_metric": field,
+            "fortios_kd_scope": "radio",
+            "fortios_kd_radio_id": self._radio_id,
+            "fortios_kd_band": self._band,
+        }
 
     @property
     def suggested_object_id(self) -> str:
@@ -1016,6 +1029,10 @@ class FortiGateAPMetric(
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, self._serial)},
         )
+        self._attr_extra_state_attributes = {
+            "fortios_kd_metric": field,
+            "fortios_kd_scope": "ap",
+        }
 
     def _get_ap(self) -> dict[str, Any] | None:
         for ap in self.coordinator.data.get("results", []):
@@ -1041,10 +1058,34 @@ class FortiGateAPMetric(
         return None
 
 
-class FortiGateWiFiClientMAC(
-    CoordinatorEntity[FortiOSKDCoordinator],
-    SensorEntity,
+class FortiGateWiFiClientCoordinatorEntity(
+    CoordinatorEntity[FortiOSKDCoordinator], SensorEntity
 ):
+    """Write client state only when its value or availability changes."""
+
+    _last_coordinator_state: tuple[bool, Any] | None = None
+
+    def _coordinator_state(self) -> tuple[bool, Any]:
+        """Return the state fields that can change during a refresh."""
+        return (self.available, self.native_value)
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to updates and remember the initial entity state."""
+        await super().async_added_to_hass()
+        self._last_coordinator_state = self._coordinator_state()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Write state only when the coordinator changed this entity."""
+        current_state = self._coordinator_state()
+        if current_state == self._last_coordinator_state:
+            return
+
+        self._last_coordinator_state = current_state
+        self.async_write_ha_state()
+
+
+class FortiGateWiFiClientMAC(FortiGateWiFiClientCoordinatorEntity):
     """Represent a connected Wi-Fi client."""
 
     _attr_has_entity_name = True
@@ -1074,14 +1115,7 @@ class FortiGateWiFiClientMAC(
         )
 
     def _get_client(self) -> dict[str, Any] | None:
-        clients = self.coordinator.data["wifi_clients"]["results"]
-
-        for client in clients:
-            mac = client.get("mac")
-            if isinstance(mac, str) and mac.lower() == self._mac:
-                return client
-
-        return None
+        return self.coordinator.get_wifi_client(self._mac)
 
     @property
     def available(self) -> bool:
@@ -1112,10 +1146,7 @@ class FortiGateWiFiClientLastKnownMAC(SensorEntity):
         )
 
 
-class FortiGateWiFiClientMetric(
-    CoordinatorEntity[FortiOSKDCoordinator],
-    SensorEntity,
-):
+class FortiGateWiFiClientMetric(FortiGateWiFiClientCoordinatorEntity):
     """Represent a Wi-Fi client field."""
 
     _attr_has_entity_name = True
@@ -1154,14 +1185,7 @@ class FortiGateWiFiClientMetric(
         )
 
     def _get_client(self) -> dict[str, Any] | None:
-        clients = self.coordinator.data.get("wifi_clients", {}).get("results", [])
-
-        for client in clients:
-            mac = client.get("mac")
-            if isinstance(mac, str) and mac.lower() == self._mac:
-                return client
-
-        return None
+        return self.coordinator.get_wifi_client(self._mac)
 
     @property
     def native_value(self) -> Any:
@@ -1198,7 +1222,7 @@ class FortiGateWiFiClientMetric(
 
 
 class FortiGateWiFiClientLastKnownHostname(
-    CoordinatorEntity[FortiOSKDCoordinator], RestoreEntity, SensorEntity
+    FortiGateWiFiClientCoordinatorEntity, RestoreEntity
 ):
     """Retain the most recently reported hostname for a wifi client."""
 
@@ -1228,20 +1252,17 @@ class FortiGateWiFiClientLastKnownHostname(
 
     def _current_hostname(self) -> str | None:
         """Return the client's current valid hostname."""
-        clients = self.coordinator.data.get("wifi_clients", {}).get("results", [])
+        client = self.coordinator.get_wifi_client(self._mac)
+        if client is None:
+            return None
 
-        for client in clients:
-            mac = client.get("mac")
-            if not isinstance(mac, str) or mac.lower() != self._mac:
-                continue
-
-            hostname = client.get("hostname")
-            if (
-                isinstance(hostname, str)
-                and hostname
-                and hostname.casefold() not in {"none", "unknown", "unavailable"}
-            ):
-                return mask_client_hostname(hostname) if self._should_mask else hostname
+        hostname = client.get("hostname")
+        if (
+            isinstance(hostname, str)
+            and hostname
+            and hostname.casefold() not in {"none", "unknown", "unavailable"}
+        ):
+            return mask_client_hostname(hostname) if self._should_mask else hostname
 
         return None
 

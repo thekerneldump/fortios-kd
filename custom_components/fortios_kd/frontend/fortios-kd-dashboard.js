@@ -1,205 +1,322 @@
-const CLIENT_CARD_TEMPLATE = String.raw`
-{% set ns = namespace(cards=[]) %}
+const FILTER_DEFAULTS = new Set([
+  "All",
+  "unknown",
+  "unavailable",
+  "none",
+  "",
+]);
 
-{% set selected_fortigate =
-  states('select.wifi_client_fortigate_filter') %}
-{% set selected_ap =
-  states('select.wifi_client_ap_filter') %}
-{% set selected_ssid =
-  states('select.wifi_client_ssid_filter') %}
-{% set selected_area =
-  states('select.wifi_client_area_filter') %}
-{% set selected_label =
-  states('select.wifi_client_label_filter') %}
+function registryEntry(registry, id) {
+  return registry?.get?.(id) ?? registry?.[id];
+}
 
-{% for mac in states.sensor | sort(attribute='entity_id') %}
-  {% if mac.entity_id.startswith('sensor.wifi_client_')
-        and mac.entity_id.endswith('_mac_address') %}
+function registryValues(registry) {
+  if (!registry) {
+    return [];
+  }
 
-    {% set base =
-      mac.entity_id | replace('_mac_address', '') %}
-    {% set hostname = states(base ~ '_hostname') %}
-    {% set last_known_hostname =
-      states(base ~ '_last_known_hostname') %}
-    {% set fortigate = states(base ~ '_fortigate') %}
-    {% set ap = states(base ~ '_ap_name') %}
-    {% set ssid = states(base ~ '_ssid') %}
-    {% set client_device_id = device_id(mac.entity_id) %}
-    {% set client_area = area_name(mac.entity_id) %}
+  return registry.values ? [...registry.values()] : Object.values(registry);
+}
 
-    {% if ap not in
-          ['unknown', 'unavailable', 'none', ''] %}
-      {% set ap_device_id = device_id(ap) %}
-    {% else %}
-      {% set ap_device_id = none %}
-    {% endif %}
+function registryName(entry, fallback = "") {
+  return entry?.name_by_user || entry?.name || fallback;
+}
 
-    {% set label_ns = namespace(names=[]) %}
-    {% if client_device_id %}
-      {% for label_id in labels(client_device_id) %}
-        {% set current_label_name = label_name(label_id) %}
-        {% if current_label_name %}
-          {% set label_ns.names =
-            label_ns.names + [current_label_name] %}
-        {% endif %}
-      {% endfor %}
-    {% endif %}
+function selectedFilter(hass, entityId) {
+  return hass.states[entityId]?.state || "All";
+}
 
-    {% set area_text = client_area or 'No Area' %}
-    {% if label_ns.names %}
-      {% set label_text =
-        label_ns.names | unique | sort | join(', ') %}
-    {% else %}
-      {% set label_text = 'No Labels' %}
-    {% endif %}
+function matchesFilter(selected, value) {
+  return FILTER_DEFAULTS.has(selected) || selected === value;
+}
 
-    {% set fortigate_matches =
-      selected_fortigate in
-        ['All', 'unknown', 'unavailable', 'none', '']
-      or fortigate == selected_fortigate
-    %}
-    {% set ap_matches =
-      selected_ap in
-        ['All', 'unknown', 'unavailable', 'none', '']
-      or ap == selected_ap
-    %}
-    {% set unavailable_mode =
-      selected_ssid == 'Unavailable Clients'
-    %}
-    {% set ssid_matches =
-      (
-        unavailable_mode
-        and mac.state == 'unavailable'
-      )
-      or
-      (
-        not unavailable_mode
-        and (
-          selected_ssid in
-            ['All', 'unknown', 'unavailable', 'none', '']
-          or ssid == selected_ssid
-        )
-      )
-    %}
-    {% set area_matches =
-      selected_area in
-        ['All', 'unknown', 'unavailable', 'none', '']
-      or (
-        selected_area == 'No Area'
-        and not client_area
-      )
-      or client_area == selected_area
-    %}
-    {% set label_matches =
-      selected_label in
-        ['All', 'unknown', 'unavailable', 'none', '']
-      or (
-        selected_label == 'No Labels'
-        and not label_ns.names
-      )
-      or selected_label in label_ns.names
-    %}
+function stateValue(hass, entityId) {
+  return hass.states[entityId]?.state || "unavailable";
+}
 
-    {% if fortigate_matches
-          and ap_matches
-          and ssid_matches
-          and area_matches
-          and label_matches %}
+function labelNames(hass, device) {
+  return [...(device?.labels || [])]
+    .map((labelId) => registryName(registryEntry(hass.labels, labelId)))
+    .filter(Boolean)
+    .sort((left, right) => left.localeCompare(right));
+}
 
-      {% if hostname not in
-            ['unknown', 'unavailable', 'none', ''] %}
-        {% set title = hostname %}
-      {% elif last_known_hostname not in
-            ['unknown', 'unavailable', 'none', ''] %}
-        {% set title = last_known_hostname %}
-      {% else %}
-        {% set title = 'Wifi Client' %}
-      {% endif %}
+function clientModel(hass) {
+  const selectedFortigate = selectedFilter(
+    hass,
+    "select.wifi_client_fortigate_filter",
+  );
+  const selectedAccessPoint = selectedFilter(
+    hass,
+    "select.wifi_client_ap_filter",
+  );
+  const selectedSsid = selectedFilter(hass, "select.wifi_client_ssid_filter");
+  const selectedArea = selectedFilter(hass, "select.wifi_client_area_filter");
+  const selectedLabel = selectedFilter(
+    hass,
+    "select.wifi_client_label_filter",
+  );
+  const unavailableMode = selectedSsid === "Unavailable Clients";
+  const devices = registryValues(hass.devices);
+  const macStates = Object.values(hass.states)
+    .filter(
+      (state) =>
+        state.entity_id.startsWith("sensor.wifi_client_") &&
+        state.entity_id.endsWith("_mac_address"),
+    )
+    .sort((left, right) => left.entity_id.localeCompare(right.entity_id));
+  const cards = [];
+  const signatureParts = [
+    selectedFortigate,
+    selectedAccessPoint,
+    selectedSsid,
+    selectedArea,
+    selectedLabel,
+  ];
 
-      {% set link_ns = namespace(rows=[]) %}
-      {% if client_device_id %}
-        {% set link_ns.rows = link_ns.rows + [{
-          'type': 'button',
-          'name': title,
-          'icon': 'mdi:devices',
-          'action_name': 'Open client',
-          'tap_action': {
-            'action': 'navigate',
-            'navigation_path':
-              '/config/devices/device/' ~ client_device_id
-          }
-        }] %}
-      {% endif %}
-      {% if ap_device_id %}
-        {% set link_ns.rows = link_ns.rows + [{
-          'type': 'button',
-          'name': ap,
-          'icon': 'mdi:access-point-network',
-          'action_name': 'Open AP',
-          'tap_action': {
-            'action': 'navigate',
-            'navigation_path':
-              '/config/devices/device/' ~ ap_device_id
-          }
-        }] %}
-      {% endif %}
+  for (const macState of macStates) {
+    const base = macState.entity_id.slice(0, -"_mac_address".length);
+    const hostname = stateValue(hass, `${base}_hostname`);
+    const lastKnownHostname = stateValue(
+      hass,
+      `${base}_last_known_hostname`,
+    );
+    const fortigate = stateValue(hass, `${base}_fortigate`);
+    const accessPoint = stateValue(hass, `${base}_ap_name`);
+    const ssid = stateValue(hass, `${base}_ssid`);
+    const entity = registryEntry(hass.entities, macState.entity_id);
+    const clientDevice = registryEntry(hass.devices, entity?.device_id);
+    const areaId = entity?.area_id || clientDevice?.area_id;
+    const areaName = registryName(registryEntry(hass.areas, areaId));
+    const labels = labelNames(hass, clientDevice);
+    const fortigateDeviceId = clientDevice?.via_device_id;
+    const accessPointDevice = devices.find(
+      (device) =>
+        device.via_device_id === fortigateDeviceId &&
+        registryName(device) === accessPoint,
+    );
+    const areaText = areaName || "No Area";
+    const labelText = labels.length ? labels.join(", ") : "No Labels";
+    const areaMatches =
+      matchesFilter(selectedArea, areaName) ||
+      (selectedArea === "No Area" && !areaName);
+    const labelMatches =
+      matchesFilter(selectedLabel, "") ||
+      (selectedLabel === "No Labels" && !labels.length) ||
+      labels.includes(selectedLabel);
+    const ssidMatches = unavailableMode
+      ? macState.state === "unavailable"
+      : matchesFilter(selectedSsid, ssid);
+    const title = !FILTER_DEFAULTS.has(hostname)
+      ? hostname
+      : !FILTER_DEFAULTS.has(lastKnownHostname)
+        ? lastKnownHostname
+        : "Wifi Client";
 
-      {% set ns.cards = ns.cards + [{
-        'type': 'entities',
-        'title': title,
-        'entities': link_ns.rows + [
-          {
-            'type': 'section',
-            'label': 'Area: ' ~ area_text
-          },
-          {
-            'type': 'section',
-            'label': 'Labels: ' ~ label_text
-          },
-          {
-            'entity': mac.entity_id,
-            'name': 'MAC address'
-          },
-          {
-            'entity': base ~ '_last_known_mac',
-            'name': 'Last Known MAC'
-          },
-          {
-            'entity': base ~ '_ip_address',
-            'name': 'IP address'
-          },
-          {
-            'entity': base ~ '_fortigate',
-            'name': 'FortiGate'
-          },
-          {
-            'entity': base ~ '_ap_name',
-            'name': 'Access point'
-          },
-          {
-            'entity': base ~ '_ssid',
-            'name': 'SSID'
-          },
-          {
-            'entity': base ~ '_hostname',
-            'name': 'Hostname'
-          },
-          {
-            'entity': base ~ '_last_known_hostname',
-            'name': 'Last Known Hostname'
-          },
-          {
-            'entity': base ~ '_signal',
-            'name': 'Signal strength'
-          }
-        ]
-      }] %}
-    {% endif %}
-  {% endif %}
-{% endfor %}
+    signatureParts.push(
+      macState.entity_id,
+      macState.state,
+      hostname,
+      lastKnownHostname,
+      fortigate,
+      accessPoint,
+      ssid,
+      entity?.device_id || "",
+      accessPointDevice?.id || "",
+      areaText,
+      labelText,
+    );
 
-{{ ns.cards }}
-`;
+    if (
+      !matchesFilter(selectedFortigate, fortigate) ||
+      !matchesFilter(selectedAccessPoint, accessPoint) ||
+      !ssidMatches ||
+      !areaMatches ||
+      !labelMatches
+    ) {
+      continue;
+    }
+
+    const rows = [];
+
+    if (entity?.device_id) {
+      rows.push({
+        type: "button",
+        name: title,
+        icon: "mdi:devices",
+        action_name: "Open client",
+        tap_action: {
+          action: "navigate",
+          navigation_path: `/config/devices/device/${entity.device_id}`,
+        },
+      });
+    }
+
+    if (accessPointDevice?.id) {
+      rows.push({
+        type: "button",
+        name: accessPoint,
+        icon: "mdi:access-point-network",
+        action_name: "Open AP",
+        tap_action: {
+          action: "navigate",
+          navigation_path: `/config/devices/device/${accessPointDevice.id}`,
+        },
+      });
+    }
+
+    rows.push(
+      { type: "section", label: `Area: ${areaText}` },
+      { type: "section", label: `Labels: ${labelText}` },
+      { entity: macState.entity_id, name: "MAC address" },
+      { entity: `${base}_last_known_mac`, name: "Last Known MAC" },
+      { entity: `${base}_ip_address`, name: "IP address" },
+      { entity: `${base}_fortigate`, name: "FortiGate" },
+      { entity: `${base}_ap_name`, name: "Access point" },
+      { entity: `${base}_ssid`, name: "SSID" },
+      { entity: `${base}_hostname`, name: "Hostname" },
+      {
+        entity: `${base}_last_known_hostname`,
+        name: "Last Known Hostname",
+      },
+      { entity: `${base}_signal`, name: "Signal strength" },
+    );
+
+    cards.push({ type: "entities", title, entities: rows });
+  }
+
+  return {
+    cards,
+    signature: signatureParts.join("\u001e"),
+  };
+}
+
+class FortiOSKDWifiClientGrid extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._cards = [];
+    this._buildVersion = 0;
+  }
+
+  setConfig(config) {
+    this._config = config;
+    this._signature = undefined;
+    this._scheduleBuild();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+
+    for (const card of this._cards) {
+      card.hass = hass;
+    }
+
+    if (!this._config) {
+      return;
+    }
+
+    const model = clientModel(hass);
+    if (model.signature !== this._signature) {
+      this._signature = model.signature;
+      this._scheduleBuild(model);
+    }
+  }
+
+  getCardSize() {
+    return Math.max(1, this._cards.length * 3);
+  }
+
+  _scheduleBuild(model) {
+    if (!this._hass || !this._config) {
+      return;
+    }
+
+    const nextModel = model || clientModel(this._hass);
+    const buildVersion = ++this._buildVersion;
+    void this._build(nextModel, buildVersion);
+  }
+
+  async _build(model, buildVersion) {
+    const helpers = await window.loadCardHelpers();
+    const cards = await Promise.all(
+      model.cards.map((config) => helpers.createCardElement(config)),
+    );
+
+    if (buildVersion !== this._buildVersion) {
+      return;
+    }
+
+    this._cards = cards;
+    const style = document.createElement("style");
+    style.textContent = `
+      :host {
+        display: block;
+      }
+      .clients {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+        gap: 8px;
+      }
+      .empty {
+        color: var(--secondary-text-color);
+        padding: 16px;
+      }
+    `;
+    const container = document.createElement("div");
+    container.className = "clients";
+
+    if (!cards.length) {
+      const empty = document.createElement("ha-card");
+      empty.innerHTML =
+        '<div class="empty">No Wifi clients match the selected filters.</div>';
+      container.append(empty);
+    } else {
+      for (const card of cards) {
+        card.hass = this._hass;
+        container.append(card);
+      }
+    }
+
+    this.shadowRoot.replaceChildren(style, container);
+  }
+}
+
+const CLIENT_CARD_ELEMENT = "fortios-kd-wifi-client-grid";
+
+if (!customElements.get(CLIENT_CARD_ELEMENT)) {
+  customElements.define(CLIENT_CARD_ELEMENT, FortiOSKDWifiClientGrid);
+}
+
+function filterCard() {
+  return {
+    type: "entities",
+    title: "Client Filters",
+    entities: [
+      {
+        entity: "select.wifi_client_fortigate_filter",
+        name: "FortiGate",
+      },
+      {
+        entity: "select.wifi_client_ap_filter",
+        name: "Access point",
+      },
+      {
+        entity: "select.wifi_client_ssid_filter",
+        name: "SSID",
+      },
+      {
+        entity: "select.wifi_client_area_filter",
+        name: "Area",
+      },
+      {
+        entity: "select.wifi_client_label_filter",
+        name: "Label",
+      },
+    ],
+    grid_options: { columns: "full" },
+  };
+}
 
 class FortiOSKDDashboardStrategy extends HTMLElement {
   static getCreateSuggestions(_hass) {
@@ -228,46 +345,9 @@ class FortiOSKDDashboardStrategy extends HTMLElement {
                   heading: "Wifi Clients",
                   heading_style: "title",
                 },
+                filterCard(),
                 {
-                  type: "entities",
-                  title: "Client Filters",
-                  entities: [
-                    {
-                      entity: "select.wifi_client_fortigate_filter",
-                      name: "FortiGate",
-                    },
-                    {
-                      entity: "select.wifi_client_ap_filter",
-                      name: "Access point",
-                    },
-                    {
-                      entity: "select.wifi_client_ssid_filter",
-                      name: "SSID",
-                    },
-                    {
-                      entity: "select.wifi_client_area_filter",
-                      name: "Area",
-                    },
-                    {
-                      entity: "select.wifi_client_label_filter",
-                      name: "Label",
-                    },
-                  ],
-                  grid_options: { columns: "full" },
-                },
-                {
-                  type: "custom:auto-entities",
-                  card: {
-                    type: "custom:layout-card",
-                    layout_type: "custom:grid-layout",
-                    layout: {
-                      "grid-template-columns":
-                        "repeat(auto-fit, minmax(300px, 1fr))",
-                      "grid-gap": "8px",
-                    },
-                  },
-                  card_param: "cards",
-                  filter: { template: CLIENT_CARD_TEMPLATE },
+                  type: `custom:${CLIENT_CARD_ELEMENT}`,
                   grid_options: { columns: "full" },
                 },
               ],

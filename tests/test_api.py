@@ -24,7 +24,8 @@ async def test_monitor_api(
     """Test the system and wifi Monitor API modules."""
     status = {"version": "v6.4.16", "build": 2098}
     access_points = {"results": []}
-    wifi_clients = {"results": []}
+    wifi_client = {"mac": "AA:BB:CC:DD:EE:FF", "hostname": "TestPhone"}
+    wifi_clients = {"results": [wifi_client]}
     configured_vaps = {
         "results": [
             {
@@ -93,12 +94,16 @@ async def test_monitor_api(
         api.version.minor,
         api.version.patch,
     ) == (6, 4, 16)
-    assert hass.data[DOMAIN][entry.entry_id]["coordinator"].data == {
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    assert coordinator.data == {
         "results": [],
         "wifi_clients": wifi_clients,
         "configured_vaps": configured_vaps,
         "configured_wtp_profiles": configured_wtp_profiles,
     }
+    assert coordinator.get_wifi_client("aa:bb:cc:dd:ee:ff") == wifi_client
+    assert coordinator.get_wifi_client("AA:BB:CC:DD:EE:FF") == wifi_client
+    assert coordinator.get_wifi_client("00:00:00:00:00:00") is None
 
 
 async def test_fortios_62_hostname_lookup(

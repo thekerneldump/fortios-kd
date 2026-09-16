@@ -36,6 +36,11 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.client = client
         self.include_unassigned_ssids = include_unassigned_ssids
         self._radio_counters: dict[tuple[str, int, str], tuple[int, float]] = {}
+        self._wifi_clients_by_mac: dict[str, dict[str, Any]] = {}
+
+    def get_wifi_client(self, mac: str) -> dict[str, Any] | None:
+        """Return a wifi client by MAC address without scanning every client."""
+        return self._wifi_clients_by_mac.get(mac.casefold())
 
     def _add_radio_rates(self, data: dict[str, Any]) -> None:
         """Calculate radio rates from cumulative byte counters."""
@@ -87,6 +92,11 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             configured_vaps = await self.client.configuration.wifi.get_vaps()
 
             data["wifi_clients"] = wifi_clients
+            self._wifi_clients_by_mac = {
+                mac.casefold(): wifi_client
+                for wifi_client in wifi_clients.get("results", [])
+                if isinstance((mac := wifi_client.get("mac")), str) and mac
+            }
             data["configured_vaps"] = configured_vaps
             if not self.include_unassigned_ssids:
                 data[

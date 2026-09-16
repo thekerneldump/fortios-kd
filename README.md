@@ -227,21 +227,29 @@ The Wifi client dashboard requires the
 [layout-card](https://github.com/thomasloven/lovelace-layout-card) frontend
 cards, both of which can be installed through HACS.
 
-### Community dashboard
+### Community dashboards
 
-On Home Assistant 2026.5 or newer, FortiOS KD registers a community dashboard
-strategy automatically. After installing the two required frontend cards and
-restarting Home Assistant:
+On Home Assistant 2026.5 or newer, FortiOS KD registers two community dashboard
+strategies automatically. After installing the two required frontend cards and
+restarting Home Assistant, open **Settings > Dashboards**, select
+**Add dashboard**, and choose either:
 
-1. Open **Settings > Dashboards**.
-2. Select **Add dashboard**.
-3. Choose **FortiOS KD Wifi Clients** under **Community dashboards**.
-4. Confirm or customize the suggested **KD Wifi Clients** title,
-   `kd-wifi-clients` URL, and icon.
+- **FortiOS KD Wifi Clients** for searchable client cards. Its suggested title
+  is **KD Wifi Clients** and its suggested URL is `kd-wifi-clients`.
+- **FortiOS KD Wifi Graphs** for automatically discovered radio throughput and
+  health graphs. Its suggested title is **KD Wifi Graphs** and its suggested URL
+  is `kd-wifi-graphs`.
 
-The generated dashboard automatically adapts the number of client columns to
-the available screen width. Its configuration remains managed by the strategy;
-use the manual dashboard when you want to customize individual cards.
+Both dashboards share the FortiGate, AP, and SSID filter selects. The graph
+dashboard includes calculated RX/TX rates, FortiGate-reported bandwidth,
+channel utilization, noise floor, and MAC error rates for every discovered 2.4
+GHz and 5 GHz radio. Selecting an SSID includes radios that broadcast that SSID;
+the plotted values remain totals for the entire radio rather than per-SSID
+measurements.
+
+The generated dashboards automatically adapt their columns to the available
+screen width. Their configurations remain managed by their strategies; use the
+manual dashboard when you want to customize individual cards.
 
 ### Manual dashboard
 
