@@ -7,8 +7,8 @@ are recorded here for each release.
 
 ### Added
 
-- Add optional per-FortiGate device organization using either an existing Home
-  Assistant area or a reusable/automatically created label.
+- Add optional per-FortiGate device organization using a selected or automatically
+  created Home Assistant area, or a reusable/automatically created label.
 - Add opt-in propagation when a hub or AP changes area while preserving devices
   that users manually moved elsewhere.
 

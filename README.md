@@ -135,10 +135,11 @@ When adding a FortiGate, provide:
 Each FortiGate can optionally organize its devices using either a Home Assistant
 area or label:
 
-- **Area:** Assign the FortiGate to an existing area. You can also assign its APs
-  and wifi clients to that area, move still-managed devices when the FortiGate
-  moves, and move clients with an AP when its area changes. Devices manually moved
-  away from the previously managed area are left alone.
+- **Area:** Select an existing area or enter a new area name for the integration
+  to create. You can also assign the FortiGate's APs and wifi clients to that area,
+  move still-managed devices when the FortiGate moves, and move clients with an AP
+  when its area changes. Devices manually moved away from the previously managed
+  area are left alone.
 - **Label:** Enter a label name to apply to the FortiGate, APs, and wifi clients.
   The integration reuses an existing label with that name or creates one using the
   selected color. Existing labels keep their current color.

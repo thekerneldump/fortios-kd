@@ -27,6 +27,7 @@ from .const import (
     CONF_MASK_SSIDS,
     CONF_MASK_VLAN_IDS,
     CONF_MOVE_DEVICES_WITH_HUB,
+    CONF_NEW_HUB_AREA_NAME,
     CONF_ORGANIZATION_MODE,
     CONF_REQUEST_TIMEOUT,
     DEFAULT_CLIENTS_FOLLOW_AP_AREA,
@@ -99,6 +100,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
             )
         ),
         vol.Optional(CONF_HUB_AREA_ID): selector.AreaSelector(),
+        vol.Optional(CONF_NEW_HUB_AREA_NAME): selector.TextSelector(),
         vol.Optional(
             CONF_INHERIT_HUB_AREA,
             default=DEFAULT_INHERIT_HUB_AREA,
@@ -191,9 +193,15 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if mode == ORGANIZATION_MODE_AREA:
             area_id = user_input.get(CONF_HUB_AREA_ID)
-            if not area_id:
+            new_area_name = str(user_input.get(CONF_NEW_HUB_AREA_NAME, "")).strip()
+            user_input[CONF_NEW_HUB_AREA_NAME] = new_area_name
+            if not area_id and not new_area_name:
                 errors[CONF_HUB_AREA_ID] = "area_required"
-            elif ar.async_get(self.hass).async_get_area(area_id) is None:
+            elif (
+                area_id
+                and not new_area_name
+                and ar.async_get(self.hass).async_get_area(area_id) is None
+            ):
                 errors[CONF_HUB_AREA_ID] = "invalid_area"
 
         if mode == ORGANIZATION_MODE_LABEL:
@@ -201,6 +209,17 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             user_input[CONF_HUB_LABEL] = label_name
             if not label_name:
                 errors[CONF_HUB_LABEL] = "label_required"
+
+    def _resolve_new_area(self, user_input: dict[str, Any]) -> None:
+        """Create or reuse a typed area name and store its area ID."""
+        if user_input[CONF_ORGANIZATION_MODE] != ORGANIZATION_MODE_AREA:
+            user_input.pop(CONF_NEW_HUB_AREA_NAME, None)
+            return
+
+        new_area_name = user_input.pop(CONF_NEW_HUB_AREA_NAME, "")
+        if new_area_name:
+            area = ar.async_get(self.hass).async_get_or_create(new_area_name)
+            user_input[CONF_HUB_AREA_ID] = area.id
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
@@ -239,6 +258,7 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         description_placeholders={"version": str(version)},
                     )
 
+                self._resolve_new_area(user_input)
                 organization_manager = stored_data.get("organization_manager")
                 if isinstance(organization_manager, FortiOSKDOrganizationManager):
                     organization_manager.reconfigure(user_input)
@@ -288,6 +308,7 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         ),
                         errors=errors,
                     )
+                self._resolve_new_area(user_input)
                 return self.async_create_entry(
                     title=f"{host}:{user_input[CONF_PORT]}",
                     data=user_input,

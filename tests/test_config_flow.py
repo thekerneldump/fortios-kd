@@ -4,6 +4,7 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_PORT, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers import area_registry as ar
 from tests.common import MockConfigEntry  # noqa: TID251
 from tests.test_util.aiohttp import AiohttpClientMocker  # noqa: TID251
 
@@ -19,6 +20,7 @@ CONF_INCLUDE_UNASSIGNED_SSIDS = "include_unassigned_ssids"
 CONF_REQUEST_TIMEOUT = "request_timeout"
 CONF_ORGANIZATION_MODE = "organization_mode"
 CONF_HUB_AREA_ID = "hub_area_id"
+CONF_NEW_HUB_AREA_NAME = "new_hub_area_name"
 CONF_INHERIT_HUB_AREA = "inherit_hub_area"
 CONF_MOVE_DEVICES_WITH_HUB = "move_devices_if_hub_moves"
 CONF_CLIENTS_FOLLOW_AP_AREA = "clients_follow_ap_area"
@@ -186,3 +188,35 @@ async def test_area_organization_requires_area(
 
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {CONF_HUB_AREA_ID: "area_required"}
+
+
+async def test_area_organization_creates_typed_area(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """Test that a typed area is created and stored by ID."""
+    aioclient_mock.get(
+        f"{BASE_URL}/monitor/system/status",
+        json={"version": "v6.4.16", "build": 2098},
+    )
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_HOST: "FGT.Example.Local",
+            CONF_API_KEY: "test-api-key",
+            CONF_PORT: 8443,
+            CONF_VERIFY_SSL: True,
+            CONF_ORGANIZATION_MODE: "area",
+            CONF_NEW_HUB_AREA_NAME: "Other House",
+        },
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    area = ar.async_get(hass).async_get_area_by_name("Other House")
+    assert area is not None
+    assert result["data"][CONF_HUB_AREA_ID] == area.id
+    assert CONF_NEW_HUB_AREA_NAME not in result["data"]
