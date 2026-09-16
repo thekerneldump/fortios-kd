@@ -9,30 +9,46 @@ from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_PORT, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import selector
+from homeassistant.helpers import area_registry as ar, selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import FortiOSApi
 from .const import (
+    CONF_CLIENTS_FOLLOW_AP_AREA,
+    CONF_HUB_AREA_ID,
+    CONF_HUB_LABEL,
+    CONF_HUB_LABEL_COLOR,
     CONF_INCLUDE_UNASSIGNED_SSIDS,
+    CONF_INHERIT_HUB_AREA,
     CONF_MASK_AP_NAMES,
     CONF_MASK_CLIENT_HOSTNAMES,
     CONF_MASK_CLIENT_MACS,
     CONF_MASK_SERIAL_NUMBERS,
     CONF_MASK_SSIDS,
     CONF_MASK_VLAN_IDS,
+    CONF_MOVE_DEVICES_WITH_HUB,
+    CONF_ORGANIZATION_MODE,
     CONF_REQUEST_TIMEOUT,
+    DEFAULT_CLIENTS_FOLLOW_AP_AREA,
+    DEFAULT_HUB_LABEL_COLOR,
     DEFAULT_INCLUDE_UNASSIGNED_SSIDS,
+    DEFAULT_INHERIT_HUB_AREA,
     DEFAULT_MASK_AP_NAMES,
     DEFAULT_MASK_CLIENT_HOSTNAMES,
     DEFAULT_MASK_CLIENT_MACS,
     DEFAULT_MASK_SERIAL_NUMBERS,
     DEFAULT_MASK_SSIDS,
     DEFAULT_MASK_VLAN_IDS,
+    DEFAULT_MOVE_DEVICES_WITH_HUB,
+    DEFAULT_ORGANIZATION_MODE,
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_VERIFY_SSL,
     DOMAIN,
+    ORGANIZATION_MODE_AREA,
+    ORGANIZATION_MODE_LABEL,
+    ORGANIZATION_MODE_NONE,
 )
+from .organization import FortiOSKDOrganizationManager
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
@@ -60,6 +76,46 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
             CONF_INCLUDE_UNASSIGNED_SSIDS,
             default=DEFAULT_INCLUDE_UNASSIGNED_SSIDS,
         ): selector.BooleanSelector(),
+        vol.Optional(
+            CONF_ORGANIZATION_MODE,
+            default=DEFAULT_ORGANIZATION_MODE,
+        ): selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=[
+                    selector.SelectOptionDict(
+                        value=ORGANIZATION_MODE_NONE,
+                        label="Do not organize devices",
+                    ),
+                    selector.SelectOptionDict(
+                        value=ORGANIZATION_MODE_AREA,
+                        label="Use an area",
+                    ),
+                    selector.SelectOptionDict(
+                        value=ORGANIZATION_MODE_LABEL,
+                        label="Use a label",
+                    ),
+                ],
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            )
+        ),
+        vol.Optional(CONF_HUB_AREA_ID): selector.AreaSelector(),
+        vol.Optional(
+            CONF_INHERIT_HUB_AREA,
+            default=DEFAULT_INHERIT_HUB_AREA,
+        ): selector.BooleanSelector(),
+        vol.Optional(
+            CONF_MOVE_DEVICES_WITH_HUB,
+            default=DEFAULT_MOVE_DEVICES_WITH_HUB,
+        ): selector.BooleanSelector(),
+        vol.Optional(
+            CONF_CLIENTS_FOLLOW_AP_AREA,
+            default=DEFAULT_CLIENTS_FOLLOW_AP_AREA,
+        ): selector.BooleanSelector(),
+        vol.Optional(CONF_HUB_LABEL): selector.TextSelector(),
+        vol.Optional(
+            CONF_HUB_LABEL_COLOR,
+            default=DEFAULT_HUB_LABEL_COLOR,
+        ): selector.ColorRGBSelector(),
         vol.Optional(
             CONF_MASK_SERIAL_NUMBERS,
             default=DEFAULT_MASK_SERIAL_NUMBERS,
@@ -125,6 +181,27 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    def _validate_organization(
+        self,
+        user_input: dict[str, Any],
+        errors: dict[str, str],
+    ) -> None:
+        """Validate and normalize optional hub organization settings."""
+        mode = user_input[CONF_ORGANIZATION_MODE]
+
+        if mode == ORGANIZATION_MODE_AREA:
+            area_id = user_input.get(CONF_HUB_AREA_ID)
+            if not area_id:
+                errors[CONF_HUB_AREA_ID] = "area_required"
+            elif ar.async_get(self.hass).async_get_area(area_id) is None:
+                errors[CONF_HUB_AREA_ID] = "invalid_area"
+
+        if mode == ORGANIZATION_MODE_LABEL:
+            label_name = str(user_input.get(CONF_HUB_LABEL, "")).strip()
+            user_input[CONF_HUB_LABEL] = label_name
+            if not label_name:
+                errors[CONF_HUB_LABEL] = "label_required"
+
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -140,6 +217,7 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             user_input[CONF_HOST] = host
             user_input[CONF_PORT] = int(user_input[CONF_PORT])
             user_input[CONF_REQUEST_TIMEOUT] = int(user_input[CONF_REQUEST_TIMEOUT])
+            self._validate_organization(user_input, errors)
 
             await self.async_set_unique_id(host)
             self._abort_if_unique_id_mismatch()
@@ -151,6 +229,19 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             else:
+                if errors:
+                    return self.async_show_form(
+                        step_id="reconfigure",
+                        data_schema=self.add_suggested_values_to_schema(
+                            STEP_USER_DATA_SCHEMA, user_input
+                        ),
+                        errors=errors,
+                        description_placeholders={"version": str(version)},
+                    )
+
+                organization_manager = stored_data.get("organization_manager")
+                if isinstance(organization_manager, FortiOSKDOrganizationManager):
+                    organization_manager.reconfigure(user_input)
                 return self.async_update_reload_and_abort(
                     entry,
                     title=f"{host}:{user_input[CONF_PORT]}",
@@ -177,6 +268,7 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             user_input[CONF_HOST] = host
             user_input[CONF_PORT] = int(user_input[CONF_PORT])
             user_input[CONF_REQUEST_TIMEOUT] = int(user_input[CONF_REQUEST_TIMEOUT])
+            self._validate_organization(user_input, errors)
 
             await self.async_set_unique_id(host)
             self._abort_if_unique_id_configured()
@@ -188,6 +280,14 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             else:
+                if errors:
+                    return self.async_show_form(
+                        step_id="user",
+                        data_schema=self.add_suggested_values_to_schema(
+                            STEP_USER_DATA_SCHEMA, user_input
+                        ),
+                        errors=errors,
+                    )
                 return self.async_create_entry(
                     title=f"{host}:{user_input[CONF_PORT]}",
                     data=user_input,

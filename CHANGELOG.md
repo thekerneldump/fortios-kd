@@ -3,6 +3,15 @@
 Notable changes and deliberate compatibility, security, and privacy decisions
 are recorded here for each release.
 
+## Unreleased
+
+### Added
+
+- Add optional per-FortiGate device organization using either an existing Home
+  Assistant area or a reusable/automatically created label.
+- Add opt-in propagation when a hub or AP changes area while preserving devices
+  that users manually moved elsewhere.
+
 ## 0.2.2 - 2026-09-15
 
 ### Security

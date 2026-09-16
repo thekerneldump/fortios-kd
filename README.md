@@ -130,6 +130,23 @@ When adding a FortiGate, provide:
 - **Include unassigned SSIDs in filters:** Include every configured VAP in the
   SSID filter instead of only SSIDs assigned through active WTP profiles.
 
+### Areas and labels
+
+Each FortiGate can optionally organize its devices using either a Home Assistant
+area or label:
+
+- **Area:** Assign the FortiGate to an existing area. You can also assign its APs
+  and wifi clients to that area, move still-managed devices when the FortiGate
+  moves, and move clients with an AP when its area changes. Devices manually moved
+  away from the previously managed area are left alone.
+- **Label:** Enter a label name to apply to the FortiGate, APs, and wifi clients.
+  The integration reuses an existing label with that name or creates one using the
+  selected color. Existing labels keep their current color.
+
+Area assignment is optional. Entities inherit their device's area unless an entity
+has been assigned its own area in Home Assistant. Switching to label organization
+does not erase existing area assignments.
+
 Additional FortiGates can be added by repeating the integration setup. The
 detected FortiOS version is displayed when an existing hub is reconfigured.
 Invalid or insufficient API credentials are reported in the configuration form

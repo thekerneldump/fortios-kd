@@ -33,6 +33,7 @@ from .const import (
 )
 from .coordinator import FortiOSKDCoordinator
 from .filter_manager import FortiOSKDFilterManager
+from .organization import FortiOSKDOrganizationManager
 from .privacy import mask_name
 
 _LOGGER = logging.getLogger(__name__)
@@ -70,11 +71,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     domain_data = hass.data.setdefault(DOMAIN, {})
     manager = domain_data.setdefault(DATA_FILTER_MANAGER, FortiOSKDFilterManager())
+    organization_manager = FortiOSKDOrganizationManager(
+        hass,
+        entry,
+        coordinator,
+        str(status.get("serial") or entry.unique_id or entry.entry_id),
+    )
     domain_data[entry.entry_id] = {
         "client": client,
         "status": status,
         "coordinator": coordinator,
+        "organization_manager": organization_manager,
     }
+    organization_manager.setup()
 
     fortigate_hostname = status.get("results", {}).get("hostname") or entry.title
     displayed_fortigate_hostname = (
