@@ -85,17 +85,6 @@ def mask_vlan_id(vlan_id: str | int) -> str:
     return "*" * len(str(vlan_id))
 
 
-RADIO_TYPE_BANDS = {
-    "802.11n": "2.4 GHz",
-    "802.11n,g-only": "2.4 GHz",
-    "802.11ax,n,g-only": "2.4 GHz",
-    "802.11ac": "5 GHz",
-    "802.11ac,n-only": "5 GHz",
-    "802.11ac-only": "5 GHz",
-    "802.11ax-5G-only": "5 GHz",
-}
-
-
 def _registered_wifi_client_macs(
     entries: Iterable[er.RegistryEntry],
     fortigate_serial: str,
@@ -166,6 +155,7 @@ async def async_setup_entry(
     }
 
     coordinator: FortiOSKDCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    radio_type_bands = coordinator.radio_type_bands
     aps = coordinator.data["results"]
     wifi_clients = coordinator.data["wifi_clients"]["results"]
     current_client_macs = {
@@ -285,7 +275,12 @@ async def async_setup_entry(
             *(FortiGateAPJoinTime(ap) for ap in aps),
             *(FortiGateAPUpTime(ap) for ap in aps),
             *(
-                FortiGateAPRadioSSIDs(ap, radio, mask_ssids)
+                FortiGateAPRadioSSIDs(
+                    ap,
+                    radio,
+                    mask_ssids,
+                    radio_type_bands,
+                )
                 for ap in aps
                 for radio in ap.get("radio", [])
             ),
@@ -300,7 +295,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -314,7 +309,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -331,7 +326,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -348,7 +343,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -365,7 +360,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -382,7 +377,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -397,7 +392,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -412,7 +407,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -427,7 +422,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -442,7 +437,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -457,7 +452,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -473,7 +468,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -486,7 +481,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -499,7 +494,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -516,7 +511,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -533,7 +528,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
         ]
     )
@@ -883,11 +878,12 @@ class FortiGateAPRadioSSIDs(SensorEntity):
         ap: dict[str, Any],
         radio: dict[str, Any],
         mask_ssids: bool,
+        radio_type_bands: dict[str, str],
     ) -> None:
         serial = ap["serial"]
         radio_id = radio["radio_id"]
         self._radio_object_id = f"Radio {radio_id} SSIDs"
-        band = RADIO_TYPE_BANDS.get(
+        band = radio_type_bands.get(
             radio.get("radio_type"),
             f"Radio {radio_id}",
         )
@@ -940,7 +936,7 @@ class FortiGateAPRadioMetric(
         self._radio_id = radio["radio_id"]
         self._field = field
         self._radio_object_id = f"Radio {self._radio_id} {label}"
-        self._band = RADIO_TYPE_BANDS.get(
+        self._band = coordinator.radio_type_bands.get(
             radio.get("radio_type"),
             f"Radio {self._radio_id}",
         )

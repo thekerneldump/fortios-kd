@@ -216,6 +216,9 @@ def test_radio_entities_expose_graph_dashboard_metadata() -> None:
     )
 
     coordinator = Mock()
+    coordinator.radio_type_bands = {
+        "future-5g-radio": "5 GHz",
+    }
     coordinator.data = {
         "results": [
             {
@@ -223,7 +226,7 @@ def test_radio_entities_expose_graph_dashboard_metadata() -> None:
                 "radio": [
                     {
                         "radio_id": 2,
-                        "radio_type": "802.11ac-only",
+                        "radio_type": "future-5g-radio",
                         "ssid": {"vap-main": "Test Wifi"},
                         "tx_bits_per_second": 1234,
                     }
@@ -242,7 +245,12 @@ def test_radio_entities_expose_graph_dashboard_metadata() -> None:
         "TX Rate",
         "mdi:upload-network",
     )
-    ssids = FortiGateAPRadioSSIDs(ap, radio, False)
+    ssids = FortiGateAPRadioSSIDs(
+        ap,
+        radio,
+        False,
+        coordinator.radio_type_bands,
+    )
 
     assert metric.extra_state_attributes == {
         "fortios_kd_metric": "tx_bits_per_second",
@@ -290,6 +298,6 @@ def test_ap_entities_expose_graph_dashboard_metadata() -> None:
 
 def test_fortios_6_2_5ghz_radio_type() -> None:
     """Test FortiOS 6.2 802.11ac radios are classified as 5 GHz."""
-    from custom_components.fortios_kd.sensor import RADIO_TYPE_BANDS  # noqa: PLC0415
+    from custom_components.fortios_kd.const import RADIO_TYPE_BANDS  # noqa: PLC0415
 
     assert RADIO_TYPE_BANDS["802.11ac"] == "5 GHz"

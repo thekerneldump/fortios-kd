@@ -5,6 +5,25 @@ are recorded here for each release.
 
 ## Unreleased
 
+### Changed
+
+- Use the FortiGate-provided `monitor/wifi/meta` band-spectrum map when
+  classifying FortiAP radios instead of relying only on a partial hardcoded
+  list. The metadata is loaded once per integration setup and reused for all
+  radio entities.
+
+### Fixed
+
+- Create radio entities for every radio type reported by the FortiGate metadata,
+  including additional 2.4 GHz and 5 GHz variants that were previously omitted.
+
+### Compatibility
+
+- Retain the complete shared radio-type map returned by FortiOS 6.2.17 and
+  6.4.16 as a built-in fallback. Both EOL releases returned the same map during
+  testing, so integrations continue to classify radios if the metadata endpoint
+  is unavailable or inaccessible.
+
 ## 0.3.0 - 2026-09-16
 
 ### Added

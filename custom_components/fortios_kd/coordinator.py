@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import FortiOSApi
+from .const import RADIO_SPECTRUM_BANDS, RADIO_TYPE_BANDS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,10 +38,58 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.include_unassigned_ssids = include_unassigned_ssids
         self._radio_counters: dict[tuple[str, int, str], tuple[int, float]] = {}
         self._wifi_clients_by_mac: dict[str, dict[str, Any]] = {}
+        self._wifi_meta_loaded = False
+        self.wifi_meta: dict[str, Any] = {}
+        self.radio_type_bands = RADIO_TYPE_BANDS.copy()
 
     def get_wifi_client(self, mac: str) -> dict[str, Any] | None:
         """Return a wifi client by MAC address without scanning every client."""
         return self._wifi_clients_by_mac.get(mac.casefold())
+
+    async def _async_load_wifi_meta(self) -> None:
+        """Load FortiGate wifi lookup tables once, retaining safe fallbacks."""
+        if self._wifi_meta_loaded:
+            return
+
+        self._wifi_meta_loaded = True
+
+        try:
+            response = await self.client.monitor.wifi.get_meta()
+        except (ClientError, TimeoutError) as err:
+            _LOGGER.warning(
+                "Unable to load FortiGate wifi metadata; using fallback radio "
+                "band mapping: %s",
+                err,
+            )
+            return
+
+        results = response.get("results")
+        if not isinstance(results, dict):
+            _LOGGER.warning(
+                "FortiGate wifi metadata response has no results object; using "
+                "fallback radio band mapping"
+            )
+            return
+
+        self.wifi_meta = results
+        spectrum_map = results.get("band_spectrum_map")
+        if not isinstance(spectrum_map, dict):
+            _LOGGER.warning(
+                "FortiGate wifi metadata has no band spectrum map; using fallback "
+                "radio band mapping"
+            )
+            return
+
+        fortigate_bands: dict[str, str] = {}
+        for radio_type, spectrum in spectrum_map.items():
+            if not isinstance(radio_type, str) or not isinstance(spectrum, str):
+                continue
+
+            if band := RADIO_SPECTRUM_BANDS.get(spectrum.casefold()):
+                fortigate_bands[radio_type] = band
+
+        if fortigate_bands:
+            self.radio_type_bands = {**RADIO_TYPE_BANDS, **fortigate_bands}
 
     def _add_radio_rates(self, data: dict[str, Any]) -> None:
         """Calculate radio rates from cumulative byte counters."""
@@ -87,6 +136,7 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
+            await self._async_load_wifi_meta()
             data = await self.client.monitor.wifi.get_managed_access_points()
             wifi_clients = await self.client.monitor.wifi.get_clients()
             configured_vaps = await self.client.configuration.wifi.get_vaps()

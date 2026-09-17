@@ -25,3 +25,7 @@ class FortiOSWifiApi:
     async def get_clients(self) -> dict[str, Any]:
         """Return connected wifi clients."""
         return await self._http.get("monitor/wifi/client")
+
+    async def get_meta(self) -> dict[str, Any]:
+        """Return wifi metadata and lookup tables."""
+        return await self._http.get("monitor/wifi/meta")

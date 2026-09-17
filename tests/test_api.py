@@ -1,7 +1,8 @@
 """Tests for the FortiOS-KD API."""
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
+from aiohttp import ClientConnectionError
 import pytest
 
 from homeassistant.components.frontend import DATA_EXTRA_MODULE_URL
@@ -26,6 +27,14 @@ async def test_monitor_api(
     access_points = {"results": []}
     wifi_client = {"mac": "AA:BB:CC:DD:EE:FF", "hostname": "TestPhone"}
     wifi_clients = {"results": [wifi_client]}
+    wifi_meta = {
+        "results": {
+            "band_spectrum_map": {
+                "802.11n": "24ghz",
+                "future-5g-radio": "5ghz",
+            }
+        }
+    }
     configured_vaps = {
         "results": [
             {
@@ -63,6 +72,10 @@ async def test_monitor_api(
     aioclient_mock.get(
         f"{BASE_URL}/monitor/wifi/client",
         json=wifi_clients,
+    )
+    aioclient_mock.get(
+        f"{BASE_URL}/monitor/wifi/meta",
+        json=wifi_meta,
     )
 
     entry = MockConfigEntry(
@@ -104,6 +117,40 @@ async def test_monitor_api(
     assert coordinator.get_wifi_client("aa:bb:cc:dd:ee:ff") == wifi_client
     assert coordinator.get_wifi_client("AA:BB:CC:DD:EE:FF") == wifi_client
     assert coordinator.get_wifi_client("00:00:00:00:00:00") is None
+    assert coordinator.wifi_meta == wifi_meta["results"]
+    assert coordinator.radio_type_bands["802.11n"] == "2.4 GHz"
+    assert coordinator.radio_type_bands["future-5g-radio"] == "5 GHz"
+
+
+async def test_wifi_meta_failure_uses_fallback(hass: HomeAssistant) -> None:
+    """Test an unavailable wifi metadata endpoint does not block updates."""
+    integration = await async_get_integration(hass, DOMAIN)
+    await integration.async_get_component()
+
+    from custom_components.fortios_kd.const import RADIO_TYPE_BANDS  # noqa: PLC0415
+    from custom_components.fortios_kd.coordinator import (  # noqa: PLC0415
+        FortiOSKDCoordinator,
+    )
+
+    client = Mock()
+    client.monitor.wifi.get_meta = AsyncMock(side_effect=ClientConnectionError())
+    client.monitor.wifi.get_managed_access_points = AsyncMock(
+        return_value={"results": []}
+    )
+    client.monitor.wifi.get_clients = AsyncMock(return_value={"results": []})
+    client.configuration.wifi.get_vaps = AsyncMock(return_value={"results": []})
+
+    coordinator = FortiOSKDCoordinator(
+        hass,
+        client,
+        include_unassigned_ssids=True,
+    )
+
+    await coordinator._async_update_data()  # noqa: SLF001
+    await coordinator._async_update_data()  # noqa: SLF001
+
+    assert coordinator.radio_type_bands == RADIO_TYPE_BANDS
+    assert client.monitor.wifi.get_meta.await_count == 1
 
 
 async def test_fortios_62_hostname_lookup(
