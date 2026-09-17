@@ -5,15 +5,55 @@ are recorded here for each release.
 
 ## Unreleased
 
+## 0.4.0 - 2026-09-17
+
+### Added
+
+- Add FortiGate ARP-table collection and diagnostic MAC, IP-address, interface,
+  age, and VDOM entities for each discovered network device.
+- Keep ARP entries as separate per-FortiGate Home Assistant devices so they can
+  be independently selected for ARP-focused dashboards.
+- Populate a wifi client's IP Address entity from exact-MAC ARP bindings when
+  the wifi-client endpoint does not currently provide an address.
+- Add a reverse WiFi Client Match diagnostic to ARP devices so an exact-MAC
+  client association can be inspected from either side.
+- Add an IP Conflict diagnostic for different MACs simultaneously claiming an
+  ARP device's IP in current wifi-client or ARP data. This can expose overlapping
+  DHCP scopes, multiple DHCP servers, static collisions, stale data, or spoofing
+  without treating an IP address as device identity.
+- Add per-FortiGate settings for opting into ARP synchronization and separately
+  controlling ARP-to-wifi client matching. ARP synchronization defaults off to
+  avoid unexpectedly creating large numbers of devices.
+- Add an auto-populating KD ARP Entries community dashboard for current ARP
+  devices, including direct links to the ARP device and its FortiGate.
+- Add a compact KD ARP Table community dashboard with IP, interface, and MAC
+  columns plus direct links to ARP devices and exact wifi-client matches.
+
 ### Changed
 
+- Load all four community dashboard strategies through one cache-busted frontend
+  module and register the Wifi graph strategy before graph-card setup.
+- Suppress unchanged AP, radio, ARP, and wifi-client coordinator state writes,
+  reducing websocket traffic during the 30-second polling cycle.
 - Use the FortiGate-provided `monitor/wifi/meta` band-spectrum map when
   classifying FortiAP radios instead of relying only on a partial hardcoded
   list. The metadata is loaded once per integration setup and reused for all
   radio entities.
+- Use `monitor/wifi/ap-names` to match managed FortiAP serial prefixes to their
+  model and platform type. Channel capabilities are then requested once for
+  each installed platform and cached for the life of the coordinator.
+- Expose the FortiAP model on AP devices and supported channel widths plus DFS
+  status on radio channel entities when the FortiGate supplies that metadata.
 
 ### Fixed
 
+- Restore KD ARP Table wifi-client links by joining ARP and wifi-client
+  entities with an opaque exact-match identifier; Home Assistant's frontend
+  display registry intentionally omits entity unique IDs.
+- Prevent intermittent community-dashboard strategy timeouts caused by partial
+  frontend registration or unsupported constructable stylesheet APIs.
+- Prevent ARP MAC-address entities from appearing as Wifi clients by using
+  explicit dashboard entry-type metadata instead of generated entity IDs.
 - Create radio entities for every radio type reported by the FortiGate metadata,
   including additional 2.4 GHz and 5 GHz variants that were previously omitted.
 
@@ -23,6 +63,14 @@ are recorded here for each release.
   6.4.16 as a built-in fallback. Both EOL releases returned the same map during
   testing, so integrations continue to classify radios if the metadata endpoint
   is unavailable or inaccessible.
+- Treat `ap-names` as the FortiGate firmware's supported-model catalog rather
+  than a list of installed APs, and query `ap_channels` only for models matched
+  to currently managed AP serial numbers. Allowed channels and DFS markers are
+  intentionally not hardcoded because they may vary by regulatory context.
+- Skip `/monitor/network/arp` on FortiOS 6.2 because Fortinet did not add that
+  monitor endpoint until FortiOS 6.4. An unavailable or permission-restricted
+  ARP endpoint on a supported release does not block the integration's primary
+  wifi update.
 
 ## 0.3.0 - 2026-09-16
 

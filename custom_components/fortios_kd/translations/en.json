@@ -17,6 +17,8 @@
           "api_key": "API key",
           "host": "Hostname or IP address",
           "include_unassigned_ssids": "Include unassigned SSIDs in filters",
+          "sync_arp_table": "Sync ARP table devices (FortiOS 6.4 and newer)",
+          "match_arp_wifi_clients": "Match ARP entries with wifi clients",
           "organization_mode": "Organize this FortiGate and its devices",
           "request_timeout": "Request timeout",
           "verify_ssl": "Verify SSL certificate",
@@ -33,6 +35,8 @@
       "reconfigure": {
         "data": {
           "include_unassigned_ssids": "Include unassigned SSIDs in filters",
+          "sync_arp_table": "Sync ARP table devices (FortiOS 6.4 and newer)",
+          "match_arp_wifi_clients": "Match ARP entries with wifi clients",
           "organization_mode": "Organize this FortiGate and its devices",
           "request_timeout": "Request timeout",
           "verify_ssl": "Verify SSL certificate",

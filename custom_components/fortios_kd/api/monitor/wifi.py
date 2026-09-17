@@ -29,3 +29,14 @@ class FortiOSWifiApi:
     async def get_meta(self) -> dict[str, Any]:
         """Return wifi metadata and lookup tables."""
         return await self._http.get("monitor/wifi/meta")
+
+    async def get_ap_names(self) -> dict[str, Any]:
+        """Return FortiAP serial prefixes, models, and platform types."""
+        return await self._http.get("monitor/wifi/ap-names")
+
+    async def get_ap_channels(self, platform_type: str) -> dict[str, Any]:
+        """Return radio and channel capabilities for a FortiAP platform."""
+        return await self._http.get(
+            "monitor/wifi/ap_channels",
+            params={"platform_type": platform_type},
+        )

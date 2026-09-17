@@ -42,6 +42,11 @@ class FortiOSApi:
         """Return the detected FortiOS version."""
         return self.context.version
 
+    @property
+    def supports_network_arp(self) -> bool:
+        """Return whether this FortiOS release provides the ARP monitor."""
+        return self.version is not None and self.version >= FortiOSVersion(6, 4, 0)
+
     async def async_initialize(self) -> dict[str, Any]:
         """Read and store the FortiOS version."""
         status = await self.monitor.system.get_status()

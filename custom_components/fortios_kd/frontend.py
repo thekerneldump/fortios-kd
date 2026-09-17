@@ -6,19 +6,32 @@ from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import HomeAssistant
 
-FRONTEND_ASSETS = {
-    "/fortios_kd/fortios-kd-dashboard.js": (
-        Path(__file__).parent / "frontend" / "fortios-kd-dashboard.js"
-    ),
-    "/fortios_kd/fortios-kd-wifi-graphs-dashboard.js": (
-        Path(__file__).parent / "frontend" / "fortios-kd-wifi-graphs-dashboard.js"
-    ),
-}
-FRONTEND_URL, FRONTEND_PATH = next(iter(FRONTEND_ASSETS.items()))
-FRONTEND_MODULE_URL = f"{FRONTEND_URL}?v={FRONTEND_PATH.stat().st_mtime_ns}"
-FRONTEND_MODULE_URLS = tuple(
-    f"{url}?v={path.stat().st_mtime_ns}" for url, path in FRONTEND_ASSETS.items()
+FRONTEND_URL = "/fortios_kd/fortios-kd-dashboard.js"
+FRONTEND_PATH = Path(__file__).parent / "frontend" / "fortios-kd-dashboard.js"
+FRONTEND_GRAPH_URL = "/fortios_kd/fortios-kd-wifi-graphs-dashboard.js"
+FRONTEND_GRAPH_PATH = (
+    Path(__file__).parent / "frontend" / "fortios-kd-wifi-graphs-dashboard.js"
 )
+FRONTEND_ARP_URL = "/fortios_kd/fortios-kd-arp-dashboard.js"
+FRONTEND_ARP_PATH = Path(__file__).parent / "frontend" / "fortios-kd-arp-dashboard.js"
+FRONTEND_ARP_TABLE_URL = "/fortios_kd/fortios-kd-arp-table-dashboard.js"
+FRONTEND_ARP_TABLE_PATH = (
+    Path(__file__).parent / "frontend" / "fortios-kd-arp-table-dashboard.js"
+)
+FRONTEND_LOADER_URL = "/fortios_kd/fortios-kd-dashboard-loader.js"
+FRONTEND_LOADER_PATH = (
+    Path(__file__).parent / "frontend" / "fortios-kd-dashboard-loader.js"
+)
+FRONTEND_ASSETS = {
+    FRONTEND_URL: FRONTEND_PATH,
+    FRONTEND_GRAPH_URL: FRONTEND_GRAPH_PATH,
+    FRONTEND_ARP_URL: FRONTEND_ARP_PATH,
+    FRONTEND_ARP_TABLE_URL: FRONTEND_ARP_TABLE_PATH,
+    FRONTEND_LOADER_URL: FRONTEND_LOADER_PATH,
+}
+FRONTEND_VERSION = max(path.stat().st_mtime_ns for path in FRONTEND_ASSETS.values())
+FRONTEND_MODULE_URL = f"{FRONTEND_LOADER_URL}?v={FRONTEND_VERSION}"
+FRONTEND_MODULE_URLS = (FRONTEND_MODULE_URL,)
 
 
 async def async_register_dashboard_strategy(hass: HomeAssistant) -> None:

@@ -20,6 +20,8 @@ are recorded in the [changelog](CHANGELOG.md).
   response enrichment for fields that moved in later releases.
 - Represent the FortiGate, managed access points, and wifi clients as Home
   Assistant devices and entities.
+- Represent FortiGate ARP-table entries as separate network devices on FortiOS
+  6.4 and newer, with exact-MAC diagnostics linking them to wifi clients.
 - Poll all hubs through Home Assistant `DataUpdateCoordinator` instances.
 - Keep disconnected client entities available for troubleshooting, with their
   live measurements marked unavailable.
@@ -62,6 +64,28 @@ FortiOS KD currently provides information in the following areas.
 - Data rate, RX/TX bandwidth, radio idle time, and association time
 - Last Known MAC and Last Known Hostname values for disconnected clients
 
+### ARP table
+
+- MAC address, IPv4 address or addresses, interface, age, and VDOM
+- Multiple ARP bindings for one MAC are combined under one Home Assistant device
+- ARP entries remain separate devices so they can be used independently in
+  ARP-focused dashboards
+- A wifi client's existing IP Address entity prefers the live wifi-client value
+  and falls back to current ARP addresses matched by MAC when that value is absent
+- Each ARP device has a WiFi Client Match diagnostic showing the currently
+  matched client hostname, or whether no wifi client is currently detected
+- An IP Conflict diagnostic flags a different current MAC claiming the same IP
+  in wifi-client or ARP data. Possible causes include overlapping DHCP scopes,
+  multiple DHCP servers, static-address collisions, stale records, or spoofing.
+  It is an anomaly warning and does not merge or identify devices by IP.
+
+The `/monitor/network/arp` endpoint is not available before FortiOS 6.4. On
+FortiOS 6.2, ARP collection is skipped without generating request errors.
+ARP synchronization is disabled by default and can be enabled independently for
+each configured FortiGate. Wifi-client matching is a separate per-hub option;
+disabling it keeps ARP devices and ARP-to-ARP conflict detection while removing
+wifi matching and ARP fallback from wifi-client IP entities.
+
 Some fields are absent on particular FortiOS or FortiAP versions. Those entities
 may be unavailable when the firewall does not provide the underlying value.
 
@@ -95,6 +119,7 @@ The access profile needs read access to these FortiGate permission groups:
 | Permission group | Access | Used for |
 | --- | --- | --- |
 | System (`sysgrp`) | Read | System status, firmware details, model, and hostname |
+| Network (`netgrp`) | Read | ARP table on FortiOS 6.4 and newer |
 | Wifi Controller (`wifi`) | Read | Managed APs, clients, VAPs, and WTP profiles |
 
 Use a **global** access-profile scope so the required monitor and configuration
@@ -107,14 +132,18 @@ The integration currently reads these API resources:
 - `/api/v2/monitor/system/status`
 - `/api/v2/monitor/system/firmware` on versions that require it
 - `/api/v2/cmdb/system/global` on versions that require it
+- `/api/v2/monitor/network/arp` on FortiOS 6.4 and newer
 - `/api/v2/monitor/wifi/managed_ap`
 - `/api/v2/monitor/wifi/client`
+- `/api/v2/monitor/wifi/meta`
+- `/api/v2/monitor/wifi/ap-names`
+- `/api/v2/monitor/wifi/ap_channels` for managed FortiAP models
 - `/api/v2/cmdb/wireless-controller/vap`
 - `/api/v2/cmdb/wireless-controller/wtp-profile`
 
 FortiOS configuration commands and GUI labels vary by release. Verify the final
 profile with `show full-configuration system accprofile` and confirm that
-`sysgrp` and `wifi` are set to read access.
+`sysgrp`, `netgrp`, and `wifi` are set to read access.
 
 ## Configuration
 
@@ -229,18 +258,25 @@ cards, both of which can be installed through HACS.
 
 ### Community dashboards
 
-On Home Assistant 2026.5 or newer, FortiOS KD registers two community dashboard
-strategies automatically. After installing the two required frontend cards and
-restarting Home Assistant, open **Settings > Dashboards**, select
-**Add dashboard**, and choose either:
+On Home Assistant 2026.5 or newer, FortiOS KD registers four community
+dashboard strategies automatically. After restarting Home Assistant, open
+**Settings > Dashboards**, select **Add dashboard**, and choose:
 
 - **FortiOS KD Wifi Clients** for searchable client cards. Its suggested title
   is **KD Wifi Clients** and its suggested URL is `kd-wifi-clients`.
 - **FortiOS KD Wifi Graphs** for automatically discovered radio throughput and
   health graphs. Its suggested title is **KD Wifi Graphs** and its suggested URL
   is `kd-wifi-graphs`.
+- **FortiOS KD ARP Entries** for current ARP-table devices and their optional
+  wifi-client match and IP-conflict diagnostics. Its suggested title is
+  **KD ARP Entries** and its suggested URL is `kd-arp-entries`.
+- **FortiOS KD ARP Table** for a compact table of current IP addresses,
+  interfaces, and MAC addresses, with direct links to ARP devices and exactly
+  matched wifi clients. Its suggested title is **KD ARP Table** and its
+  suggested URL is `kd-arp-table`.
 
-Both dashboards share the FortiGate, AP, and SSID filter selects. The graph
+The Wifi client dashboard explicitly excludes ARP devices. The Wifi client and
+graph dashboards share the FortiGate, AP, and SSID filter selects. The graph
 dashboard includes calculated RX/TX rates, FortiGate-reported bandwidth,
 channel utilization, noise floor, and MAC error rates for every discovered 2.4
 GHz and 5 GHz radio. Selecting an SSID includes radios that broadcast that SSID;

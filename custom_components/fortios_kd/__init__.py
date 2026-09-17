@@ -23,13 +23,17 @@ from .const import (
     CONF_MASK_AP_NAMES,
     CONF_MASK_SERIAL_NUMBERS,
     CONF_MASK_SSIDS,
+    CONF_MATCH_ARP_WIFI_CLIENTS,
     CONF_REQUEST_TIMEOUT,
+    CONF_SYNC_ARP_TABLE,
     DATA_FILTER_MANAGER,
     DEFAULT_INCLUDE_UNASSIGNED_SSIDS,
     DEFAULT_MASK_AP_NAMES,
     DEFAULT_MASK_SERIAL_NUMBERS,
     DEFAULT_MASK_SSIDS,
+    DEFAULT_MATCH_ARP_WIFI_CLIENTS,
     DEFAULT_REQUEST_TIMEOUT,
+    DEFAULT_SYNC_ARP_TABLE,
     DOMAIN,
 )
 from .coordinator import FortiOSKDCoordinator
@@ -70,10 +74,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         CONF_INCLUDE_UNASSIGNED_SSIDS,
         DEFAULT_INCLUDE_UNASSIGNED_SSIDS,
     )
+    sync_arp_table = entry.data.get(CONF_SYNC_ARP_TABLE, DEFAULT_SYNC_ARP_TABLE)
+    match_arp_wifi_clients = entry.data.get(
+        CONF_MATCH_ARP_WIFI_CLIENTS,
+        DEFAULT_MATCH_ARP_WIFI_CLIENTS,
+    )
     coordinator = FortiOSKDCoordinator(
         hass,
         client,
         include_unassigned_ssids=include_unassigned_ssids,
+        sync_arp_table=sync_arp_table,
+        match_arp_wifi_clients=match_arp_wifi_clients,
     )
     await coordinator.async_config_entry_first_refresh()
 

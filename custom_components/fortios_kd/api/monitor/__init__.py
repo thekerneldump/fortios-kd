@@ -3,6 +3,7 @@
 from custom_components.fortios_kd.api.client import FortiOSHttpClient
 from custom_components.fortios_kd.api.context import FortiOSApiContext
 
+from .network import FortiOSNetworkApi
 from .system import FortiOSSystemApi
 from .wifi import FortiOSWifiApi
 
@@ -16,5 +17,6 @@ class FortiOSMonitorApi:
         context: FortiOSApiContext,
     ) -> None:
         """Initialize the Monitor API groups."""
+        self.network = FortiOSNetworkApi(http, context)
         self.system = FortiOSSystemApi(http, context)
         self.wifi = FortiOSWifiApi(http, context)

@@ -17,6 +17,8 @@ CONF_MASK_CLIENT_HOSTNAMES = "mask_client_hostnames"
 CONF_MASK_VLAN_IDS = "mask_vlan_ids"
 CONF_MASK_AP_NAMES = "mask_ap_names"
 CONF_INCLUDE_UNASSIGNED_SSIDS = "include_unassigned_ssids"
+CONF_SYNC_ARP_TABLE = "sync_arp_table"
+CONF_MATCH_ARP_WIFI_CLIENTS = "match_arp_wifi_clients"
 CONF_REQUEST_TIMEOUT = "request_timeout"
 CONF_ORGANIZATION_MODE = "organization_mode"
 CONF_HUB_AREA_ID = "hub_area_id"
@@ -57,6 +59,8 @@ async def test_user_flow(
             CONF_VERIFY_SSL: True,
             CONF_REQUEST_TIMEOUT: 60,
             CONF_INCLUDE_UNASSIGNED_SSIDS: False,
+            CONF_SYNC_ARP_TABLE: False,
+            CONF_MATCH_ARP_WIFI_CLIENTS: True,
             CONF_MASK_SERIAL_NUMBERS: True,
             CONF_MASK_SSIDS: True,
             CONF_MASK_CLIENT_MACS: True,
@@ -75,6 +79,8 @@ async def test_user_flow(
         CONF_VERIFY_SSL: True,
         CONF_REQUEST_TIMEOUT: 60,
         CONF_INCLUDE_UNASSIGNED_SSIDS: False,
+        CONF_SYNC_ARP_TABLE: False,
+        CONF_MATCH_ARP_WIFI_CLIENTS: True,
         CONF_ORGANIZATION_MODE: "none",
         CONF_MASK_SERIAL_NUMBERS: True,
         CONF_MASK_SSIDS: True,
