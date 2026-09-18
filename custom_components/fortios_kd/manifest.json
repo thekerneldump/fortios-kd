@@ -1,6 +1,7 @@
 {
   "domain": "fortios_kd",
   "name": "FortiOS KD",
+  "after_dependencies": ["snmp"],
   "codeowners": ["@thekerneldump"],
   "config_flow": true,
   "dependencies": ["frontend", "http"],
@@ -8,6 +9,6 @@
   "integration_type": "hub",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/thekerneldump/fortios-kd/issues",
-  "requirements": [],
-  "version": "0.4.0"
+  "requirements": ["pysnmp==7.1.27"],
+  "version": "0.5.0"
 }

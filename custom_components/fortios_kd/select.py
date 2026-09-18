@@ -1,4 +1,4 @@
-"""Select entities for Wifi client dashboard filters."""
+"""Select entities for FortiOS KD dashboard filters."""
 
 from typing import override
 
@@ -28,6 +28,11 @@ async def async_setup_entry(
             FortiOSKDFilterSelect(manager, "ssid"),
             FortiOSKDFilterSelect(manager, "area"),
             FortiOSKDFilterSelect(manager, "label"),
+            FortiOSKDFilterSelect(manager, "arp_fortigate"),
+            FortiOSKDFilterSelect(manager, "arp_interface"),
+            FortiOSKDFilterSelect(manager, "arp_lease_type"),
+            FortiOSKDFilterSelect(manager, "dhcp_fortigate"),
+            FortiOSKDFilterSelect(manager, "dhcp_interface"),
         ]
     )
 
@@ -52,6 +57,11 @@ class FortiOSKDFilterSelect(SelectEntity):
             "ssid": "Wifi Client SSID Filter",
             "area": "Wifi Client Area Filter",
             "label": "Wifi Client Label Filter",
+            "arp_fortigate": "ARP Table FortiGate Filter",
+            "arp_interface": "ARP Table Interface Filter",
+            "arp_lease_type": "ARP Table Lease Type Filter",
+            "dhcp_fortigate": "DHCP Entries FortiGate Filter",
+            "dhcp_interface": "DHCP Entries Interface Filter",
         }[filter_type]
         self._attr_icon = {
             "fortigate": "mdi:shield-router",
@@ -59,6 +69,11 @@ class FortiOSKDFilterSelect(SelectEntity):
             "ssid": "mdi:wifi",
             "area": "mdi:floor-plan",
             "label": "mdi:label",
+            "arp_fortigate": "mdi:shield-router",
+            "arp_interface": "mdi:lan-connect",
+            "arp_lease_type": "mdi:ip-check",
+            "dhcp_fortigate": "mdi:shield-router",
+            "dhcp_interface": "mdi:lan-connect",
         }[filter_type]
 
     @property
@@ -73,7 +88,17 @@ class FortiOSKDFilterSelect(SelectEntity):
             return self._manager.ssid_options
         if self._filter_type == "area":
             return self._manager.area_options
-        return self._manager.label_options
+        if self._filter_type == "label":
+            return self._manager.label_options
+        if self._filter_type == "arp_fortigate":
+            return self._manager.arp_fortigate_options
+        if self._filter_type == "arp_interface":
+            return self._manager.arp_interface_options
+        if self._filter_type == "arp_lease_type":
+            return self._manager.arp_lease_type_options
+        if self._filter_type == "dhcp_fortigate":
+            return self._manager.dhcp_fortigate_options
+        return self._manager.dhcp_interface_options
 
     @property
     @override
@@ -87,7 +112,17 @@ class FortiOSKDFilterSelect(SelectEntity):
             return self._manager.selected_ssid
         if self._filter_type == "area":
             return self._manager.selected_area
-        return self._manager.selected_label
+        if self._filter_type == "label":
+            return self._manager.selected_label
+        if self._filter_type == "arp_fortigate":
+            return self._manager.selected_arp_fortigate
+        if self._filter_type == "arp_interface":
+            return self._manager.selected_arp_interface
+        if self._filter_type == "arp_lease_type":
+            return self._manager.selected_arp_lease_type
+        if self._filter_type == "dhcp_fortigate":
+            return self._manager.selected_dhcp_fortigate
+        return self._manager.selected_dhcp_interface
 
     @override
     async def async_select_option(self, option: str) -> None:
@@ -100,8 +135,18 @@ class FortiOSKDFilterSelect(SelectEntity):
             self._manager.select_ssid(option)
         elif self._filter_type == "area":
             self._manager.select_area(option)
-        else:
+        elif self._filter_type == "label":
             self._manager.select_label(option)
+        elif self._filter_type == "arp_fortigate":
+            self._manager.select_arp_fortigate(option)
+        elif self._filter_type == "arp_interface":
+            self._manager.select_arp_interface(option)
+        elif self._filter_type == "arp_lease_type":
+            self._manager.select_arp_lease_type(option)
+        elif self._filter_type == "dhcp_fortigate":
+            self._manager.select_dhcp_fortigate(option)
+        else:
+            self._manager.select_dhcp_interface(option)
 
     @override
     async def async_added_to_hass(self) -> None:

@@ -108,6 +108,15 @@ def _dashboard_match_id(fortigate_serial: str, mac: str) -> str:
     return sha256(identity.encode()).hexdigest()
 
 
+def _dhcp_assignment_type(entries: Iterable[dict[str, Any]]) -> str:
+    """Describe whether DHCP entries are dynamic or reserved."""
+    return (
+        "DHCP Reserved"
+        if any(entry.get("reserved") is True for entry in entries)
+        else "DHCP"
+    )
+
+
 def _registered_wifi_client_macs(
     entries: Iterable[er.RegistryEntry],
     fortigate_serial: str,
@@ -140,6 +149,32 @@ def _registered_arp_macs(
 ) -> set[str]:
     """Return MACs represented by registered ARP address sensors."""
     unique_id_prefix = f"{fortigate_serial}_arp_"
+    unique_id_suffix = "_ip_addresses"
+    macs: set[str] = set()
+
+    for registry_entry in entries:
+        unique_id = registry_entry.unique_id
+        if (
+            registry_entry.domain != "sensor"
+            or registry_entry.platform != DOMAIN
+            or not unique_id.startswith(unique_id_prefix)
+            or not unique_id.endswith(unique_id_suffix)
+        ):
+            continue
+
+        mac = unique_id[len(unique_id_prefix) : -len(unique_id_suffix)]
+        if normalized_mac := normalize_mac_address(mac):
+            macs.add(normalized_mac)
+
+    return macs
+
+
+def _registered_dhcp_macs(
+    entries: Iterable[er.RegistryEntry],
+    fortigate_serial: str,
+) -> set[str]:
+    """Return MACs represented by registered DHCP address sensors."""
+    unique_id_prefix = f"{fortigate_serial}_dhcp_"
     unique_id_suffix = "_ip_addresses"
     macs: set[str] = set()
 
@@ -237,6 +272,17 @@ async def async_setup_entry(
     )
     known_arp_macs = current_arp_macs | registered_arp_macs
     arp_records = sorted(known_arp_macs)
+    current_dhcp_macs = coordinator.dhcp_macs if coordinator.sync_dhcp_leases else set()
+    registered_dhcp_macs = (
+        _registered_dhcp_macs(
+            registry_entries,
+            fortigate_serial,
+        )
+        if coordinator.sync_dhcp_leases
+        else set()
+    )
+    known_dhcp_macs = current_dhcp_macs | registered_dhcp_macs
+    dhcp_records = sorted(known_dhcp_macs)
 
     async_add_entities(
         [
@@ -266,6 +312,18 @@ async def async_setup_entry(
                 )
             ),
             *(
+                entity
+                for mac in dhcp_records
+                for entity in create_dhcp_entities(
+                    coordinator,
+                    mac,
+                    fortigate_serial,
+                    displayed_fortigate_hostname,
+                    mask_client_macs,
+                    mask_client_hostnames,
+                )
+            ),
+            *(
                 FortiGateAPSerialSensor(
                     ap,
                     mask_serial_numbers,
@@ -276,7 +334,7 @@ async def async_setup_entry(
             *(FortiGateAPVDOMEntity(ap) for ap in aps),
             *(FortiGateAPAPProfileEntity(ap) for ap in aps),
             *(FortiGateAPState(ap) for ap in aps),
-            *(FortiGateAPConnectingFrom(ap) for ap in aps),
+            *(FortiGateAPConnectingFrom(ap, fortigate_serial) for ap in aps),
             *(FortiGateAPConnectingInterface(ap) for ap in aps),
             *(FortiGateAPStatus(ap) for ap in aps),
             *(FortiGateAPUplink(ap) for ap in aps),
@@ -347,7 +405,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
             ),
-            *(FortiGateAPBoardMAC(ap) for ap in aps),
+            *(FortiGateAPBoardMAC(ap, fortigate_serial) for ap in aps),
             *(FortiGateAPJoinTime(ap) for ap in aps),
             *(FortiGateAPUpTime(ap) for ap in aps),
             *(
@@ -665,6 +723,31 @@ async def async_setup_entry(
     if coordinator.sync_arp_table:
         entry.async_on_unload(coordinator.async_add_listener(_add_new_arp_entries))
 
+    def _add_new_dhcp_entries() -> None:
+        new_entities: list[SensorEntity] = []
+
+        for normalized_mac in coordinator.dhcp_macs:
+            if normalized_mac in known_dhcp_macs:
+                continue
+
+            known_dhcp_macs.add(normalized_mac)
+            new_entities.extend(
+                create_dhcp_entities(
+                    coordinator,
+                    normalized_mac,
+                    fortigate_serial,
+                    displayed_fortigate_hostname,
+                    mask_client_macs,
+                    mask_client_hostnames,
+                )
+            )
+
+        if new_entities:
+            async_add_entities(new_entities)
+
+    if coordinator.sync_dhcp_leases:
+        entry.async_on_unload(coordinator.async_add_listener(_add_new_dhcp_entries))
+
     device_registry = dr.async_get(hass)
 
     fortigate_device = device_registry.async_get_or_create(
@@ -794,10 +877,18 @@ class FortiGateAPConnectingFrom(SensorEntity):
     _attr_icon = "mdi:ip-network"
     _attr_name = "Connecting From"
 
-    def __init__(self, ap: dict[str, Any]) -> None:
+    def __init__(self, ap: dict[str, Any], fortigate_serial: str) -> None:
         serial = ap["serial"]
         self._attr_unique_id = f"{serial}_connecting_from"
         self._attr_native_value = ap["connecting_from"]
+        self._attr_extra_state_attributes = {
+            "fortios_kd_entry_type": "access_point",
+            "fortios_kd_ap_field": "ip_address",
+            "fortios_kd_match_id": _dashboard_match_id(
+                fortigate_serial,
+                ap["board_mac"],
+            ),
+        }
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, serial)},
         )
@@ -951,10 +1042,18 @@ class FortiGateAPBoardMAC(SensorEntity):
     _attr_icon = "mdi:network-outline"
     _attr_name = "Board MAC Address"
 
-    def __init__(self, ap: dict[str, Any]) -> None:
+    def __init__(self, ap: dict[str, Any], fortigate_serial: str) -> None:
         serial = ap["serial"]
         self._attr_unique_id = f"{serial}_board_mac"
         self._attr_native_value = ap["board_mac"]
+        self._attr_extra_state_attributes = {
+            "fortios_kd_entry_type": "access_point",
+            "fortios_kd_ap_field": "mac_address",
+            "fortios_kd_match_id": _dashboard_match_id(
+                fortigate_serial,
+                ap["board_mac"],
+            ),
+        }
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, serial)},
         )
@@ -1399,6 +1498,119 @@ class FortiGateARPMetric(FortiGateChangedCoordinatorSensor):
         return attributes
 
 
+class FortiGateDHCPMetric(FortiGateChangedCoordinatorSensor):
+    """Represent one field from a DHCP-lease device."""
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: FortiOSKDCoordinator,
+        mac: str,
+        fortigate_serial: str,
+        fortigate_hostname: str,
+        field: str,
+        label: str,
+        icon: str,
+        *,
+        mask_mac: bool,
+        mask_hostname: bool,
+        device_class: SensorDeviceClass | None = None,
+    ) -> None:
+        """Initialize a DHCP-lease entity."""
+        super().__init__(coordinator)
+
+        self._mac = mac
+        self._field = field
+        self._mask_mac = mask_mac
+        self._mask_hostname = mask_hostname
+        dhcp_identifier = f"{fortigate_serial}_dhcp_{mac}"
+        displayed_mac = mask_client_mac(mac) if mask_mac else mac
+
+        self._attr_unique_id = f"{fortigate_serial}_dhcp_{mac}_{field}"
+        self._attr_name = label
+        self._attr_icon = icon
+        self._attr_device_class = device_class
+        self._attr_extra_state_attributes = {
+            "fortios_kd_entry_type": "dhcp_entry",
+            "fortios_kd_dhcp_field": field,
+            "fortios_kd_match_id": _dashboard_match_id(fortigate_serial, mac),
+        }
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, dhcp_identifier)},
+            name=f"DHCP Device {displayed_mac} ({fortigate_hostname})",
+            via_device=(DOMAIN, fortigate_serial),
+        )
+
+    def _entries(self) -> list[dict[str, Any]]:
+        """Return the current DHCP leases for this device."""
+        return self.coordinator.get_dhcp_entries(self._mac)
+
+    @property
+    def available(self) -> bool:
+        """Return whether this MAC has current DHCP lease data."""
+        return (
+            super().available
+            and self.coordinator.dhcp_data_available
+            and bool(self._entries())
+        )
+
+    @property
+    def native_value(self) -> Any:
+        """Return the selected DHCP field, aggregating duplicate MAC rows."""
+        entries = self._entries()
+        if not entries:
+            return None
+
+        if self._field == "mac_address":
+            return mask_client_mac(self._mac) if self._mask_mac else self._mac
+
+        if self._field == "wifi_client_match":
+            client = self.coordinator.get_wifi_client(self._mac)
+            if client is None:
+                return "Not currently detected"
+
+            hostname = client.get("hostname")
+            if isinstance(hostname, str) and hostname:
+                return (
+                    mask_client_hostname(hostname) if self._mask_hostname else hostname
+                )
+            return "Connected"
+
+        if self._field == "assignment_type":
+            return _dhcp_assignment_type(entries)
+
+        field_map = {
+            "ip_addresses": "ip",
+            "hostnames": "hostname",
+            "interfaces": "interface",
+            "statuses": "status",
+            "address_types": "type",
+            "server_mkeys": "server_mkey",
+        }
+        if source_field := field_map.get(self._field):
+            values = {
+                str(value)
+                for entry in entries
+                if (value := entry.get(source_field)) not in (None, "")
+            }
+            if self._field == "hostnames" and self._mask_hostname:
+                values = {mask_client_hostname(value) for value in values}
+            return ", ".join(sorted(values)) or None
+
+        if self._field == "lease_expiration":
+            expirations: list[int] = []
+            for entry in entries:
+                try:
+                    expirations.append(int(entry["expire_time"]))
+                except KeyError, TypeError, ValueError:
+                    continue
+            return dt_util.utc_from_timestamp(max(expirations)) if expirations else None
+
+        return None
+
+
 class FortiGateWiFiClientCoordinatorEntity(FortiGateChangedCoordinatorSensor):
     """Represent a Wi-Fi client that suppresses unchanged state writes."""
 
@@ -1597,6 +1809,53 @@ class FortiGateWiFiClientIPAddress(FortiGateWiFiClientMetric):
         )
 
 
+class FortiGateWiFiClientIPAssignedBy(FortiGateWiFiClientCoordinatorEntity):
+    """Describe whether a wifi client's current IP has a DHCP lease."""
+
+    _attr_has_entity_name = True
+    _attr_name = "IP Assigned By"
+    _attr_icon = "mdi:router-network"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: FortiOSKDCoordinator,
+        client: dict[str, Any],
+        fortigate_serial: str,
+    ) -> None:
+        """Initialize the assignment-source diagnostic."""
+        super().__init__(coordinator)
+
+        self._mac = client["mac"].lower()
+        client_identifier = f"{fortigate_serial}_wifi_client_{self._mac}"
+        self._attr_unique_id = f"{client_identifier}_ip_assigned_by"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, client_identifier)},
+        )
+
+    def _matching_entries(self) -> list[dict[str, Any]]:
+        """Return DHCP rows matching the client's current IP when known."""
+        entries = self.coordinator.get_dhcp_entries(self._mac)
+        client = self.coordinator.get_wifi_client(self._mac)
+        ip_address = client.get("ip") if client is not None else None
+        if not isinstance(ip_address, str) or not ip_address:
+            return entries
+        return [entry for entry in entries if entry.get("ip") == ip_address]
+
+    @property
+    def native_value(self) -> str:
+        """Return DHCP, DHCP Reserved, or Static or Unknown."""
+        entries = self._matching_entries()
+        return _dhcp_assignment_type(entries) if entries else "Static or Unknown"
+
+    @property
+    def available(self) -> bool:
+        """Avoid guessing until the DHCP endpoint has returned valid data."""
+        return self.coordinator.last_update_success and bool(
+            self.coordinator.dhcp_data_available
+        )
+
+
 class FortiGateWiFiClientLastKnownHostname(
     FortiGateWiFiClientCoordinatorEntity, RestoreEntity
 ):
@@ -1780,6 +2039,100 @@ def create_arp_entities(
     ]
 
 
+def create_dhcp_entities(
+    coordinator: FortiOSKDCoordinator,
+    mac: str,
+    fortigate_serial: str,
+    fortigate_hostname: str,
+    mask_mac: bool,
+    mask_hostname: bool = False,
+) -> list[SensorEntity]:
+    """Create the diagnostic entities belonging to one DHCP-lease device."""
+    common = (
+        coordinator,
+        mac,
+        fortigate_serial,
+        fortigate_hostname,
+    )
+    options = {
+        "mask_mac": mask_mac,
+        "mask_hostname": mask_hostname,
+    }
+    return [
+        FortiGateDHCPMetric(
+            *common,
+            "mac_address",
+            "DHCP MAC Address",
+            "mdi:network-outline",
+            **options,
+        ),
+        FortiGateDHCPMetric(
+            *common,
+            "ip_addresses",
+            "DHCP IP Addresses",
+            "mdi:ip-network",
+            **options,
+        ),
+        FortiGateDHCPMetric(
+            *common,
+            "hostnames",
+            "DHCP Hostnames",
+            "mdi:form-textbox",
+            **options,
+        ),
+        FortiGateDHCPMetric(
+            *common,
+            "interfaces",
+            "DHCP Interfaces",
+            "mdi:lan-connect",
+            **options,
+        ),
+        FortiGateDHCPMetric(
+            *common,
+            "statuses",
+            "DHCP Statuses",
+            "mdi:list-status",
+            **options,
+        ),
+        FortiGateDHCPMetric(
+            *common,
+            "assignment_type",
+            "IP Assignment Type",
+            "mdi:ip-check",
+            **options,
+        ),
+        FortiGateDHCPMetric(
+            *common,
+            "lease_expiration",
+            "Latest Lease Expiration",
+            "mdi:timer-sand",
+            device_class=SensorDeviceClass.TIMESTAMP,
+            **options,
+        ),
+        FortiGateDHCPMetric(
+            *common,
+            "address_types",
+            "DHCP Address Types",
+            "mdi:ip-outline",
+            **options,
+        ),
+        FortiGateDHCPMetric(
+            *common,
+            "server_mkeys",
+            "DHCP Server IDs",
+            "mdi:server-network",
+            **options,
+        ),
+        FortiGateDHCPMetric(
+            *common,
+            "wifi_client_match",
+            "WiFi Client Match",
+            "mdi:wifi-check",
+            **options,
+        ),
+    ]
+
+
 def create_wifi_client_entities(
     coordinator: FortiOSKDCoordinator,
     client: dict[str, Any],
@@ -1820,6 +2173,17 @@ def create_wifi_client_entities(
             fortigate_hostname,
         ),
         FortiGateWiFiClientIPAddress(coordinator, client, fortigate_serial),
+        *(
+            [
+                FortiGateWiFiClientIPAssignedBy(
+                    coordinator,
+                    client,
+                    fortigate_serial,
+                )
+            ]
+            if coordinator.sync_dhcp_leases is True
+            else []
+        ),
         FortiGateWiFiClientMetric(
             coordinator,
             client,

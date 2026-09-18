@@ -12,6 +12,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .api import FortiOSApi
 from .const import RADIO_SPECTRUM_BANDS, RADIO_TYPE_BANDS
+from .snmp_arp import FortiOSKDSnmpArpClient, SnmpArpError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,6 +46,8 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         include_unassigned_ssids: bool = False,
         sync_arp_table: bool = False,
         match_arp_wifi_clients: bool = True,
+        sync_dhcp_leases: bool = False,
+        snmp_arp_client: FortiOSKDSnmpArpClient | None = None,
     ) -> None:
         """Initialize the FortiGate coordinator."""
         super().__init__(
@@ -58,17 +61,26 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.include_unassigned_ssids = include_unassigned_ssids
         self.sync_arp_table = sync_arp_table
         self.match_arp_wifi_clients = match_arp_wifi_clients
+        self.sync_dhcp_leases = sync_dhcp_leases
+        self._snmp_arp_client = snmp_arp_client
         self._radio_counters: dict[tuple[str, int, str], tuple[int, float]] = {}
         self._wifi_clients_by_mac: dict[str, dict[str, Any]] = {}
         self._wifi_clients_by_ip: dict[str, list[dict[str, Any]]] = {}
         self._arp_entries_by_mac: dict[str, list[dict[str, Any]]] = {}
         self._arp_entries_by_ip: dict[str, list[dict[str, Any]]] = {}
-        self._arp_supported = bool(sync_arp_table and client.supports_network_arp)
+        self._dhcp_entries_by_mac: dict[str, list[dict[str, Any]]] = {}
+        self._dhcp_entries_by_ip: dict[str, list[dict[str, Any]]] = {}
+        self._arp_supported = bool(
+            sync_arp_table
+            and (client.supports_network_arp or snmp_arp_client is not None)
+        )
         self._arp_table: dict[str, Any] = {
             "results": [],
             "supported": self._arp_supported,
         }
         self._arp_error_logged = False
+        self._dhcp_leases: dict[str, Any] = {"results": [], "available": False}
+        self._dhcp_error_logged = False
         self._wifi_meta_loaded = False
         self.wifi_meta: dict[str, Any] = {}
         self.radio_type_bands = RADIO_TYPE_BANDS.copy()
@@ -101,10 +113,31 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return current ARP bindings claiming an IP address."""
         return self._arp_entries_by_ip.get(ip_address, [])
 
+    def get_dhcp_entries(self, mac: str) -> list[dict[str, Any]]:
+        """Return every current DHCP lease for a MAC address."""
+        normalized_mac = normalize_mac_address(mac)
+        if normalized_mac is None:
+            return []
+        return self._dhcp_entries_by_mac.get(normalized_mac, [])
+
+    def get_dhcp_entries_by_ip(self, ip_address: str) -> list[dict[str, Any]]:
+        """Return current DHCP leases claiming an IP address."""
+        return self._dhcp_entries_by_ip.get(ip_address, [])
+
     @property
     def arp_macs(self) -> set[str]:
         """Return MAC addresses currently present in the ARP table."""
         return set(self._arp_entries_by_mac)
+
+    @property
+    def dhcp_macs(self) -> set[str]:
+        """Return MAC addresses currently present in the DHCP lease table."""
+        return set(self._dhcp_entries_by_mac)
+
+    @property
+    def dhcp_data_available(self) -> bool:
+        """Return whether a valid DHCP response has been received."""
+        return bool(self._dhcp_leases.get("available"))
 
     async def _async_get_arp_table(self) -> dict[str, Any]:
         """Return the ARP table, retaining the last table after request errors."""
@@ -112,10 +145,19 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return self._arp_table
 
         try:
-            response = await self.client.monitor.network.get_arp_table()
-        except (ClientError, TimeoutError) as err:
+            if self.client.supports_network_arp:
+                response = await self.client.monitor.network.get_arp_table()
+            elif self._snmp_arp_client is not None:
+                response = await self._snmp_arp_client.async_get_arp_table()
+            else:
+                return self._arp_table
+        except (ClientError, SnmpArpError, TimeoutError) as err:
             if not self._arp_error_logged:
-                _LOGGER.warning("Unable to load the FortiGate ARP table: %s", err)
+                _LOGGER.warning(
+                    "Unable to load the FortiGate ARP table using %s: %s",
+                    "the API" if self.client.supports_network_arp else "SNMPv2c",
+                    err,
+                )
                 self._arp_error_logged = True
             return self._arp_table
 
@@ -153,6 +195,51 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self._arp_entries_by_mac = entries_by_mac
         self._arp_entries_by_ip = entries_by_ip
+
+    async def _async_get_dhcp_leases(self) -> dict[str, Any]:
+        """Return DHCP leases, retaining the last valid response on errors."""
+        if not self.sync_dhcp_leases:
+            return self._dhcp_leases
+
+        try:
+            response = await self.client.monitor.system.get_dhcp_leases()
+        except (ClientError, TimeoutError) as err:
+            if not self._dhcp_error_logged:
+                _LOGGER.warning("Unable to load FortiGate DHCP leases: %s", err)
+                self._dhcp_error_logged = True
+            return self._dhcp_leases
+
+        results = response.get("results")
+        if not isinstance(results, list):
+            if not self._dhcp_error_logged:
+                _LOGGER.warning("FortiGate DHCP response has no results list")
+                self._dhcp_error_logged = True
+            return self._dhcp_leases
+
+        self._dhcp_error_logged = False
+        self._dhcp_leases = {**response, "results": results, "available": True}
+        return self._dhcp_leases
+
+    def _index_dhcp_entries(self, dhcp_leases: dict[str, Any]) -> None:
+        """Index valid DHCP leases by canonical MAC and IP address."""
+        entries_by_mac: dict[str, list[dict[str, Any]]] = {}
+        entries_by_ip: dict[str, list[dict[str, Any]]] = {}
+
+        for entry in dhcp_leases.get("results", []):
+            if not isinstance(entry, dict):
+                continue
+
+            normalized_mac = normalize_mac_address(entry.get("mac"))
+            ip_address = entry.get("ip")
+            if normalized_mac is None or not isinstance(ip_address, str):
+                continue
+
+            normalized_entry = {**entry, "mac": normalized_mac}
+            entries_by_mac.setdefault(normalized_mac, []).append(normalized_entry)
+            entries_by_ip.setdefault(ip_address, []).append(normalized_entry)
+
+        self._dhcp_entries_by_mac = entries_by_mac
+        self._dhcp_entries_by_ip = entries_by_ip
 
     async def _async_load_wifi_meta(self) -> None:
         """Load FortiGate wifi lookup tables once, retaining safe fallbacks."""
@@ -399,6 +486,7 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self._async_load_ap_channel_capabilities(platforms)
             wifi_clients = await self.client.monitor.wifi.get_clients()
             arp_table = await self._async_get_arp_table()
+            dhcp_leases = await self._async_get_dhcp_leases()
             configured_vaps = await self.client.configuration.wifi.get_vaps()
 
             data["wifi_clients"] = wifi_clients
@@ -416,6 +504,8 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     )
             data["arp_table"] = arp_table
             self._index_arp_entries(arp_table)
+            data["dhcp_leases"] = dhcp_leases
+            self._index_dhcp_entries(dhcp_leases)
             data["configured_vaps"] = configured_vaps
             if not self.include_unassigned_ssids:
                 data[

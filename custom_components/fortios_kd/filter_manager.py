@@ -1,4 +1,4 @@
-"""Manage the shared Wifi client dashboard filters."""
+"""Manage the shared FortiOS KD dashboard filters."""
 
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -19,6 +19,9 @@ FILTER_ALL = "All"
 FILTER_UNAVAILABLE_CLIENTS = "Unavailable Clients"
 FILTER_NO_AREA = "No Area"
 FILTER_NO_LABELS = "No Labels"
+FILTER_NO_DHCP_LEASE = "No DHCP lease"
+FILTER_RESERVED = "Reserved"
+FILTER_LEASED = "Leased"
 CLIENT_IDENTIFIER_MARKER = "_wifi_client_"
 
 
@@ -49,6 +52,11 @@ class FortiOSKDFilterManager:
         self._selected_ssid = FILTER_ALL
         self._selected_area = FILTER_ALL
         self._selected_label = FILTER_ALL
+        self._selected_arp_fortigate = FILTER_ALL
+        self._selected_arp_interface = FILTER_ALL
+        self._selected_arp_lease_type = FILTER_ALL
+        self._selected_dhcp_fortigate = FILTER_ALL
+        self._selected_dhcp_interface = FILTER_ALL
         self._listeners: set[Callable[[], None]] = set()
         self._owner_entry_id: str | None = None
         self._remove_registry_listeners = [
@@ -90,6 +98,16 @@ class FortiOSKDFilterManager:
             self._selected_area = FILTER_ALL
         if self._selected_label not in self.label_options:
             self._selected_label = FILTER_ALL
+        if self._selected_arp_fortigate not in self.arp_fortigate_options:
+            self._selected_arp_fortigate = FILTER_ALL
+        if self._selected_arp_interface not in self.arp_interface_options:
+            self._selected_arp_interface = FILTER_ALL
+        if self._selected_arp_lease_type not in self.arp_lease_type_options:
+            self._selected_arp_lease_type = FILTER_ALL
+        if self._selected_dhcp_fortigate not in self.dhcp_fortigate_options:
+            self._selected_dhcp_fortigate = FILTER_ALL
+        if self._selected_dhcp_interface not in self.dhcp_interface_options:
+            self._selected_dhcp_interface = FILTER_ALL
         self._notify_listeners()
 
     @callback
@@ -140,6 +158,13 @@ class FortiOSKDFilterManager:
             self._selected_ssid = FILTER_ALL
             self._selected_area = FILTER_ALL
             self._selected_label = FILTER_ALL
+        if self._selected_arp_fortigate not in self.arp_fortigate_options:
+            self._selected_arp_fortigate = FILTER_ALL
+            self._selected_arp_interface = FILTER_ALL
+            self._selected_arp_lease_type = FILTER_ALL
+        if self._selected_dhcp_fortigate not in self.dhcp_fortigate_options:
+            self._selected_dhcp_fortigate = FILTER_ALL
+            self._selected_dhcp_interface = FILTER_ALL
         self._handle_coordinator_update()
 
     @property
@@ -407,4 +432,167 @@ class FortiOSKDFilterManager:
         if option not in self.label_options:
             raise ValueError(f"Unknown label option: {option}")
         self._selected_label = option
+        self._notify_listeners()
+
+    def _arp_hubs(self) -> list[FortiOSKDFilterHub]:
+        """Return ARP-enabled hubs matching the ARP FortiGate selection."""
+        return [
+            hub
+            for hub in self._hubs.values()
+            if hub.coordinator.sync_arp_table is True
+            and self._selected_arp_fortigate in (FILTER_ALL, hub.name)
+        ]
+
+    @property
+    def arp_fortigate_options(self) -> list[str]:
+        """Return FortiGates with ARP synchronization enabled."""
+        names = {
+            hub.name
+            for hub in self._hubs.values()
+            if hub.coordinator.sync_arp_table is True
+        }
+        return [FILTER_ALL, *sorted(names, key=str.casefold)]
+
+    @property
+    def selected_arp_fortigate(self) -> str:
+        """Return the selected ARP-table FortiGate."""
+        return self._selected_arp_fortigate
+
+    def select_arp_fortigate(self, option: str) -> None:
+        """Select an ARP-table FortiGate and reset dependent filters."""
+        if option not in self.arp_fortigate_options:
+            raise ValueError(f"Unknown ARP FortiGate option: {option}")
+
+        self._selected_arp_fortigate = option
+        self._selected_arp_interface = FILTER_ALL
+        self._selected_arp_lease_type = FILTER_ALL
+        self._notify_listeners()
+
+    @property
+    def arp_interface_options(self) -> list[str]:
+        """Return ARP interfaces for the selected FortiGate."""
+        names: set[str] = set()
+        for hub in self._arp_hubs():
+            for mac in hub.coordinator.arp_macs:
+                for entry in hub.coordinator.get_arp_entries(mac):
+                    interface = entry.get("interface")
+                    if isinstance(interface, str) and interface:
+                        names.add(interface)
+        return [FILTER_ALL, *sorted(names, key=str.casefold)]
+
+    @property
+    def selected_arp_interface(self) -> str:
+        """Return the selected ARP-table interface."""
+        return self._selected_arp_interface
+
+    def select_arp_interface(self, option: str) -> None:
+        """Select an ARP-table interface and reset the lease-type filter."""
+        if option not in self.arp_interface_options:
+            raise ValueError(f"Unknown ARP interface option: {option}")
+
+        self._selected_arp_interface = option
+        self._selected_arp_lease_type = FILTER_ALL
+        self._notify_listeners()
+
+    @property
+    def arp_lease_type_options(self) -> list[str]:
+        """Return DHCP lease types represented by matching ARP rows."""
+        lease_types: set[str] = set()
+        for hub in self._arp_hubs():
+            for mac in hub.coordinator.arp_macs:
+                arp_entries = hub.coordinator.get_arp_entries(mac)
+                if self._selected_arp_interface != FILTER_ALL and not any(
+                    entry.get("interface") == self._selected_arp_interface
+                    for entry in arp_entries
+                ):
+                    continue
+
+                dhcp_entries = hub.coordinator.get_dhcp_entries(mac)
+                if not dhcp_entries:
+                    lease_types.add(FILTER_NO_DHCP_LEASE)
+                elif any(entry.get("reserved") is True for entry in dhcp_entries):
+                    lease_types.add(FILTER_RESERVED)
+                else:
+                    lease_types.add(FILTER_LEASED)
+
+        ordered_types = [
+            lease_type
+            for lease_type in (
+                FILTER_RESERVED,
+                FILTER_LEASED,
+                FILTER_NO_DHCP_LEASE,
+            )
+            if lease_type in lease_types
+        ]
+        return [FILTER_ALL, *ordered_types]
+
+    @property
+    def selected_arp_lease_type(self) -> str:
+        """Return the selected ARP-table lease type."""
+        return self._selected_arp_lease_type
+
+    def select_arp_lease_type(self, option: str) -> None:
+        """Select an ARP-table lease type."""
+        if option not in self.arp_lease_type_options:
+            raise ValueError(f"Unknown ARP lease-type option: {option}")
+
+        self._selected_arp_lease_type = option
+        self._notify_listeners()
+
+    def _dhcp_hubs(self) -> list[FortiOSKDFilterHub]:
+        """Return DHCP-enabled hubs matching the DHCP FortiGate selection."""
+        return [
+            hub
+            for hub in self._hubs.values()
+            if hub.coordinator.sync_dhcp_leases is True
+            and self._selected_dhcp_fortigate in (FILTER_ALL, hub.name)
+        ]
+
+    @property
+    def dhcp_fortigate_options(self) -> list[str]:
+        """Return FortiGates with DHCP synchronization enabled."""
+        names = {
+            hub.name
+            for hub in self._hubs.values()
+            if hub.coordinator.sync_dhcp_leases is True
+        }
+        return [FILTER_ALL, *sorted(names, key=str.casefold)]
+
+    @property
+    def selected_dhcp_fortigate(self) -> str:
+        """Return the selected DHCP-entry FortiGate."""
+        return self._selected_dhcp_fortigate
+
+    def select_dhcp_fortigate(self, option: str) -> None:
+        """Select a DHCP-entry FortiGate and reset the interface filter."""
+        if option not in self.dhcp_fortigate_options:
+            raise ValueError(f"Unknown DHCP FortiGate option: {option}")
+
+        self._selected_dhcp_fortigate = option
+        self._selected_dhcp_interface = FILTER_ALL
+        self._notify_listeners()
+
+    @property
+    def dhcp_interface_options(self) -> list[str]:
+        """Return DHCP interfaces for the selected FortiGate."""
+        names: set[str] = set()
+        for hub in self._dhcp_hubs():
+            for mac in hub.coordinator.dhcp_macs:
+                for entry in hub.coordinator.get_dhcp_entries(mac):
+                    interface = entry.get("interface")
+                    if isinstance(interface, str) and interface:
+                        names.add(interface)
+        return [FILTER_ALL, *sorted(names, key=str.casefold)]
+
+    @property
+    def selected_dhcp_interface(self) -> str:
+        """Return the selected DHCP-entry interface."""
+        return self._selected_dhcp_interface
+
+    def select_dhcp_interface(self, option: str) -> None:
+        """Select a DHCP-entry interface."""
+        if option not in self.dhcp_interface_options:
+            raise ValueError(f"Unknown DHCP interface option: {option}")
+
+        self._selected_dhcp_interface = option
         self._notify_listeners()

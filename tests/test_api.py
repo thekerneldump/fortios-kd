@@ -48,6 +48,21 @@ async def test_monitor_api(
         ],
         "vdom": "root",
     }
+    dhcp_leases = {
+        "results": [
+            {
+                "ip": "192.0.2.50",
+                "reserved": True,
+                "mac": "AA-BB-CC-DD-EE-FF",
+                "hostname": "TestPhone",
+                "expire_time": 1790037166,
+                "status": "leased",
+                "interface": "internal",
+                "type": "ipv4",
+                "server_mkey": 21,
+            }
+        ]
+    }
     wifi_meta = {
         "results": {
             "band_spectrum_map": {
@@ -130,6 +145,10 @@ async def test_monitor_api(
         f"{BASE_URL}/monitor/network/arp",
         json=arp_table,
     )
+    aioclient_mock.get(
+        f"{BASE_URL}/monitor/system/dhcp",
+        json=dhcp_leases,
+    )
 
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -140,6 +159,7 @@ async def test_monitor_api(
             CONF_VERIFY_SSL: False,
             "sync_arp_table": True,
             "match_arp_wifi_clients": True,
+            "sync_dhcp_leases": True,
         },
     )
     entry.add_to_hass(hass)
@@ -166,6 +186,7 @@ async def test_monitor_api(
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     assert coordinator.sync_arp_table
     assert coordinator.match_arp_wifi_clients
+    assert coordinator.sync_dhcp_leases
     assert coordinator.data == {
         "results": [
             {
@@ -185,6 +206,7 @@ async def test_monitor_api(
         ],
         "wifi_clients": wifi_clients,
         "arp_table": {**arp_table, "supported": True},
+        "dhcp_leases": {**dhcp_leases, "available": True},
         "configured_vaps": configured_vaps,
         "configured_wtp_profiles": configured_wtp_profiles,
     }
@@ -199,6 +221,14 @@ async def test_monitor_api(
         }
     ]
     assert coordinator.arp_macs == {"aa:bb:cc:dd:ee:ff"}
+    assert coordinator.get_dhcp_entries("aa:bb:cc:dd:ee:ff") == [
+        {**dhcp_leases["results"][0], "mac": "aa:bb:cc:dd:ee:ff"}
+    ]
+    assert coordinator.get_dhcp_entries_by_ip("192.0.2.50") == [
+        {**dhcp_leases["results"][0], "mac": "aa:bb:cc:dd:ee:ff"}
+    ]
+    assert coordinator.dhcp_macs == {"aa:bb:cc:dd:ee:ff"}
+    assert coordinator.dhcp_data_available
     assert coordinator.wifi_meta == wifi_meta["results"]
     assert coordinator.radio_type_bands["802.11n"] == "2.4 GHz"
     assert coordinator.radio_type_bands["future-5g-radio"] == "5 GHz"
@@ -231,6 +261,7 @@ async def test_wifi_meta_failure_uses_fallback(hass: HomeAssistant) -> None:
     )
     client.monitor.wifi.get_clients = AsyncMock(return_value={"results": []})
     client.monitor.network.get_arp_table = AsyncMock()
+    client.monitor.system.get_dhcp_leases = AsyncMock()
     client.configuration.wifi.get_vaps = AsyncMock(return_value={"results": []})
 
     coordinator = FortiOSKDCoordinator(
@@ -245,6 +276,95 @@ async def test_wifi_meta_failure_uses_fallback(hass: HomeAssistant) -> None:
     assert coordinator.radio_type_bands == RADIO_TYPE_BANDS
     assert client.monitor.wifi.get_meta.await_count == 1
     assert client.monitor.wifi.get_ap_names.await_count == 1
+    client.monitor.network.get_arp_table.assert_not_awaited()
+    client.monitor.system.get_dhcp_leases.assert_not_awaited()
+
+
+async def test_dhcp_failure_does_not_block_wifi_updates(hass: HomeAssistant) -> None:
+    """Test an unavailable DHCP endpoint leaves its diagnostics unavailable."""
+    integration = await async_get_integration(hass, DOMAIN)
+    await integration.async_get_component()
+
+    from custom_components.fortios_kd.coordinator import (  # noqa: PLC0415
+        FortiOSKDCoordinator,
+    )
+
+    client = Mock()
+    client.supports_network_arp = True
+    client.monitor.wifi.get_meta = AsyncMock(return_value={"results": {}})
+    client.monitor.wifi.get_ap_names = AsyncMock(return_value={"results": []})
+    client.monitor.wifi.get_managed_access_points = AsyncMock(
+        return_value={"results": []}
+    )
+    client.monitor.wifi.get_clients = AsyncMock(return_value={"results": []})
+    client.monitor.system.get_dhcp_leases = AsyncMock(
+        side_effect=ClientConnectionError()
+    )
+    client.monitor.network.get_arp_table = AsyncMock()
+    client.configuration.wifi.get_vaps = AsyncMock(return_value={"results": []})
+
+    coordinator = FortiOSKDCoordinator(
+        hass,
+        client,
+        include_unassigned_ssids=True,
+        sync_dhcp_leases=True,
+    )
+
+    data = await coordinator._async_update_data()  # noqa: SLF001
+
+    assert data["dhcp_leases"] == {"results": [], "available": False}
+    assert not coordinator.dhcp_data_available
+    assert coordinator.dhcp_macs == set()
+    client.monitor.network.get_arp_table.assert_not_awaited()
+
+
+async def test_fortios_62_uses_snmp_arp_fallback(hass: HomeAssistant) -> None:
+    """Test FortiOS 6.2 ARP data is supplied by the configured SNMP client."""
+    integration = await async_get_integration(hass, DOMAIN)
+    await integration.async_get_component()
+
+    from custom_components.fortios_kd.coordinator import (  # noqa: PLC0415
+        FortiOSKDCoordinator,
+    )
+
+    arp_entry = {
+        "ip": "192.0.2.45",
+        "mac": "02:00:00:00:00:2d",
+        "interface": "iot_vlan",
+        "source": "snmp",
+    }
+    client = Mock()
+    client.supports_network_arp = False
+    client.monitor.wifi.get_meta = AsyncMock(return_value={"results": {}})
+    client.monitor.wifi.get_ap_names = AsyncMock(return_value={"results": []})
+    client.monitor.wifi.get_managed_access_points = AsyncMock(
+        return_value={"results": []}
+    )
+    client.monitor.wifi.get_clients = AsyncMock(return_value={"results": []})
+    client.monitor.system.get_dhcp_leases = AsyncMock()
+    client.monitor.network.get_arp_table = AsyncMock()
+    client.configuration.wifi.get_vaps = AsyncMock(return_value={"results": []})
+    snmp_client = Mock()
+    snmp_client.async_get_arp_table = AsyncMock(
+        return_value={
+            "results": [arp_entry],
+            "supported": True,
+            "source": "snmp",
+        }
+    )
+    coordinator = FortiOSKDCoordinator(
+        hass,
+        client,
+        include_unassigned_ssids=True,
+        sync_arp_table=True,
+        snmp_arp_client=snmp_client,
+    )
+
+    data = await coordinator._async_update_data()  # noqa: SLF001
+
+    assert data["arp_table"]["source"] == "snmp"
+    assert coordinator.get_arp_entries("02:00:00:00:00:2d") == [arp_entry]
+    snmp_client.async_get_arp_table.assert_awaited_once_with()
     client.monitor.network.get_arp_table.assert_not_awaited()
 
 

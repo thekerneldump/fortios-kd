@@ -119,7 +119,7 @@ async def test_arp_dashboard_strategy_asset(hass: HomeAssistant) -> None:
 
 
 async def test_arp_table_dashboard_strategy_asset(hass: HomeAssistant) -> None:
-    """Test that the compact ARP table links exact matched devices."""
+    """Test that the ARP table links matches and shows their hostnames."""
     integration = await async_get_integration(hass, DOMAIN)
     await integration.async_get_component()
 
@@ -130,18 +130,84 @@ async def test_arp_table_dashboard_strategy_asset(hass: HomeAssistant) -> None:
 
     assert 'type: "fortios-kd-arp-table"' in source
     assert 'title: "KD ARP Table"' in source
-    assert "wifiDevicesByMatchId" in source
+    assert 'entity: "select.arp_table_fortigate_filter"' in source
+    assert 'entity: "select.arp_table_interface_filter"' in source
+    assert 'entity: "select.arp_table_lease_type_filter"' in source
+    assert 'name: "Firewall"' in source
+    assert "selectedFortigate !== fortigateName" in source
+    assert "!interfaces.includes(selectedInterface)" in source
+    assert "selectedLeaseType !== leaseFilterValue" in source
+    assert 'const FILTER_NO_DHCP_LEASE = "No DHCP lease"' in source
+    assert "wifiClientsByMatchId" in source
+    assert "dhcpHostnamesByMatchId" in source
+    assert "dhcpLeaseTypesByMatchId" in source
+    assert "accessPointsByMatchId" in source
+    assert "accessPointsByScopedIp" in source
     assert "state.attributes.fortios_kd_match_id" in source
-    assert "wifiDevicesByMatchId.get(entry.matchId)" in source
-    assert 'matchState.state !== "Not currently detected"' in source
+    assert "wifiClientsByMatchId.get(entry.matchId)" in source
+    assert 'field === "hostnames"' in source
+    assert "dhcpHostnamesByMatchId.get(entry.matchId)" in source
+    assert 'field === "assignment_type"' in source
+    assert 'state.state === "DHCP Reserved"' in source
+    assert 'state.state === "DHCP"' in source
+    assert "dhcpLeaseTypesByMatchId.get(entry.matchId)" in source
+    assert 'fortios_kd_entry_type === "access_point"' in source
+    assert 'field === "mac_address"' in source
+    assert 'field === "ip_address"' in source
+    assert "accessPointsByMatchId.get(entry.matchId)" in source
+    assert "scopedIpKey(arpDevice.via_device_id, ipAddress)" in source
+    assert "accessPointByMac || accessPointByIp" in source
+    assert "`${accessPoint.name} (AP)`" in source
+    assert "available: isCurrent(state)" in source
+    assert "`${base}_hostname`" in source
+    assert "`${base}_last_known_hostname`" in source
+    assert "`${wifiClient.hostname} (WiFi)`" in source
+    assert "`${dhcpHostname} (DHCP)`" in source
+    assert "`(${wifiClient.lastKnownHostname}) (WiFi)`" in source
     assert 'iconLink(row.deviceId, "mdi:open-in-new", "Open ARP device")' in source
     assert 'iconLink(row.wifiDeviceId, "mdi:wifi", "Open WiFi client")' in source
     assert '"Device"' in source
     assert '"IP address"' in source
     assert '"Interface"' in source
     assert '"MAC address"' in source
+    assert '"Hostname"' in source
+    assert '"Lease type"' in source
+    assert "textCell(row.hostname)" in source
+    assert "textCell(row.dhcpLeaseType)" in source
     assert "class FortiOSKDARPTable extends HTMLElement" in source
     assert "type: `custom:${ARP_TABLE_CARD_ELEMENT}`" in source
+
+
+async def test_dhcp_dashboard_strategy_asset(hass: HomeAssistant) -> None:
+    """Test that the DHCP dashboard discovers entries and exposes filters."""
+    integration = await async_get_integration(hass, DOMAIN)
+    await integration.async_get_component()
+
+    from custom_components.fortios_kd.frontend import FRONTEND_ASSETS  # noqa: PLC0415
+
+    dhcp_path = FRONTEND_ASSETS["/fortios_kd/fortios-kd-dhcp-dashboard.js"]
+    source = dhcp_path.read_text()
+
+    assert 'type: "fortios-kd-dhcp-entries"' in source
+    assert 'title: "KD DHCP Entries"' in source
+    assert 'entity: "select.dhcp_entries_fortigate_filter"' in source
+    assert 'entity: "select.dhcp_entries_interface_filter"' in source
+    assert 'name: "Firewall"' in source
+    assert 'name: "Interface"' in source
+    assert 'fortios_kd_entry_type !== "dhcp_entry"' in source
+    assert "fortios_kd_dhcp_field" in source
+    assert 'entry.fields.get("mac_address")' in source
+    assert 'entry.fields.get("interfaces")' in source
+    assert "selectedFortigate !== fortigateName" in source
+    assert "!interfaces.includes(selectedInterface)" in source
+    assert "`${ipAddress} - ${interfaceName}`" in source
+    assert 'action_name: "Open DHCP device"' in source
+    assert 'action_name: "Open FortiGate"' in source
+    assert 'action_name: "Open WiFi client"' in source
+    assert '["assignment_type", "IP assignment type"]' in source
+    assert '["lease_expiration", "Latest lease expiration"]' in source
+    assert "class FortiOSKDDHCPEntryGrid extends HTMLElement" in source
+    assert "type: `custom:${DHCP_CARD_ELEMENT}`" in source
 
 
 async def test_all_frontend_assets_are_loaded(hass: HomeAssistant) -> None:
@@ -156,7 +222,7 @@ async def test_all_frontend_assets_are_loaded(hass: HomeAssistant) -> None:
         FRONTEND_MODULE_URLS,
     )
 
-    assert len(FRONTEND_ASSETS) == 5
+    assert len(FRONTEND_ASSETS) == 6
     assert len(FRONTEND_MODULE_URLS) == 1
     assert FRONTEND_MODULE_URLS[0].startswith(f"{FRONTEND_LOADER_URL}?v=")
 
@@ -165,3 +231,4 @@ async def test_all_frontend_assets_are_loaded(hass: HomeAssistant) -> None:
     assert 'import "./fortios-kd-wifi-graphs-dashboard.js";' in loader_source
     assert 'import "./fortios-kd-arp-dashboard.js";' in loader_source
     assert 'import "./fortios-kd-arp-table-dashboard.js";' in loader_source
+    assert 'import "./fortios-kd-dhcp-dashboard.js";' in loader_source

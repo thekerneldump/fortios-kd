@@ -18,6 +18,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
 from .api import FortiOSApi
+from .api.version import version_family
 from .const import (
     CONF_INCLUDE_UNASSIGNED_SSIDS,
     CONF_MASK_AP_NAMES,
@@ -25,7 +26,10 @@ from .const import (
     CONF_MASK_SSIDS,
     CONF_MATCH_ARP_WIFI_CLIENTS,
     CONF_REQUEST_TIMEOUT,
+    CONF_SNMP_COMMUNITY,
+    CONF_SNMP_PORT,
     CONF_SYNC_ARP_TABLE,
+    CONF_SYNC_DHCP_LEASES,
     DATA_FILTER_MANAGER,
     DEFAULT_INCLUDE_UNASSIGNED_SSIDS,
     DEFAULT_MASK_AP_NAMES,
@@ -33,7 +37,10 @@ from .const import (
     DEFAULT_MASK_SSIDS,
     DEFAULT_MATCH_ARP_WIFI_CLIENTS,
     DEFAULT_REQUEST_TIMEOUT,
+    DEFAULT_SNMP_PORT,
+    DEFAULT_SNMP_TIMEOUT,
     DEFAULT_SYNC_ARP_TABLE,
+    DEFAULT_SYNC_DHCP_LEASES,
     DOMAIN,
 )
 from .coordinator import FortiOSKDCoordinator
@@ -41,6 +48,7 @@ from .filter_manager import FortiOSKDFilterManager
 from .frontend import async_register_dashboard_strategy
 from .organization import FortiOSKDOrganizationManager
 from .privacy import mask_name
+from .snmp_arp import FortiOSKDSnmpArpClient
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = [Platform.SENSOR, Platform.SELECT]
@@ -79,12 +87,38 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         CONF_MATCH_ARP_WIFI_CLIENTS,
         DEFAULT_MATCH_ARP_WIFI_CLIENTS,
     )
+    sync_dhcp_leases = entry.data.get(
+        CONF_SYNC_DHCP_LEASES,
+        DEFAULT_SYNC_DHCP_LEASES,
+    )
+    snmp_arp_client = None
+    if (
+        sync_arp_table
+        and client.version is not None
+        and version_family(client.version, "6.2")
+    ):
+        community = entry.data.get(CONF_SNMP_COMMUNITY)
+        if isinstance(community, str) and community:
+            snmp_arp_client = FortiOSKDSnmpArpClient(
+                hass,
+                entry.data[CONF_HOST],
+                community,
+                int(entry.data.get(CONF_SNMP_PORT, DEFAULT_SNMP_PORT)),
+                DEFAULT_SNMP_TIMEOUT,
+            )
+        else:
+            _LOGGER.warning(
+                "ARP synchronization on FortiOS 6.2 requires SNMPv2c settings; "
+                "reconfigure this FortiGate to provide them"
+            )
     coordinator = FortiOSKDCoordinator(
         hass,
         client,
         include_unassigned_ssids=include_unassigned_ssids,
         sync_arp_table=sync_arp_table,
         match_arp_wifi_clients=match_arp_wifi_clients,
+        sync_dhcp_leases=sync_dhcp_leases,
+        snmp_arp_client=snmp_arp_client,
     )
     await coordinator.async_config_entry_first_refresh()
 

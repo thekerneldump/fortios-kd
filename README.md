@@ -20,8 +20,12 @@ are recorded in the [changelog](CHANGELOG.md).
   response enrichment for fields that moved in later releases.
 - Represent the FortiGate, managed access points, and wifi clients as Home
   Assistant devices and entities.
-- Represent FortiGate ARP-table entries as separate network devices on FortiOS
-  6.4 and newer, with exact-MAC diagnostics linking them to wifi clients.
+- Represent FortiGate ARP-table entries as separate network devices, using the
+  monitor API on FortiOS 6.4+ and an optional SNMPv2c fallback on FortiOS 6.2,
+  with exact-MAC diagnostics linking them to wifi clients.
+- Optionally represent current FortiGate DHCP leases as separate network
+  devices, preserving multiple leases for the same MAC and linking exact-MAC
+  wifi clients in both directions.
 - Poll all hubs through Home Assistant `DataUpdateCoordinator` instances.
 - Keep disconnected client entities available for troubleshooting, with their
   live measurements marked unavailable.
@@ -66,7 +70,8 @@ FortiOS KD currently provides information in the following areas.
 
 ### ARP table
 
-- MAC address, IPv4 address or addresses, interface, age, and VDOM
+- MAC address, IPv4 address or addresses, interface, and—when supplied by the
+  source—age and VDOM
 - Multiple ARP bindings for one MAC are combined under one Home Assistant device
 - ARP entries remain separate devices so they can be used independently in
   ARP-focused dashboards
@@ -74,17 +79,64 @@ FortiOS KD currently provides information in the following areas.
   and falls back to current ARP addresses matched by MAC when that value is absent
 - Each ARP device has a WiFi Client Match diagnostic showing the currently
   matched client hostname, or whether no wifi client is currently detected
+- The KD ARP Table hostname column first matches managed access points by board
+  MAC, with their management IP as a same-FortiGate fallback. It then prefers a
+  live wifi-client hostname, a current exact-MAC DHCP hostname, and finally the
+  client's Last Known Hostname. Displayed values identify their **AP**, **WiFi**,
+  or **DHCP** source. A neighboring **Lease type** column reports **Reserved** or
+  **Leased** for current DHCP matches. Dedicated cascading filters narrow the
+  table by Firewall, Interface, and Lease type; lease choices include rows with
+  no current DHCP lease.
 - An IP Conflict diagnostic flags a different current MAC claiming the same IP
   in wifi-client or ARP data. Possible causes include overlapping DHCP scopes,
   multiple DHCP servers, static-address collisions, stale records, or spoofing.
   It is an anomaly warning and does not merge or identify devices by IP.
 
-The `/monitor/network/arp` endpoint is not available before FortiOS 6.4. On
-FortiOS 6.2, ARP collection is skipped without generating request errors.
+The `/monitor/network/arp` endpoint is not available on FortiOS 6.2. For that
+release family only, enabling ARP synchronization opens a separate SNMPv2c
+configuration step and reads `IF-MIB::ifName` plus
+`IP-MIB::ipNetToMediaPhysAddress`. The SNMP table supplies IPv4, MAC, and
+interface data but not the API's age or VDOM fields, so those diagnostics remain
+unavailable on 6.2. FortiOS 6.4 and newer continue to use the REST monitor API
+and never use the stored SNMP settings.
+
 ARP synchronization is disabled by default and can be enabled independently for
 each configured FortiGate. Wifi-client matching is a separate per-hub option;
 disabling it keeps ARP devices and ARP-to-ARP conflict detection while removing
 wifi matching and ARP fallback from wifi-client IP entities.
+
+### FortiOS 6.2 SNMP requirements
+
+FortiOS KD supports SNMP only as the ARP-table transport for FortiOS 6.2. It is
+not a general SNMP monitoring feature and is not used on 6.4 or later.
+
+- Enable read-only SNMPv2c queries on the FortiGate and apply the configuration.
+- Restrict the community's allowed manager host to the Home Assistant address.
+- Permit UDP 161 from Home Assistant to the FortiGate management interface.
+- Enter that community and port in the version-gated **Configure FortiOS 6.2
+  ARP access** step.
+
+SNMPv2c does not encrypt its community or payload. Use it only on a trusted
+management network, use a dedicated read-only community, and do not reuse a
+sensitive password. The community is stored in the Home Assistant config entry
+like the FortiGate API key.
+
+### DHCP leases
+
+- MAC address, IP address or addresses, hostname or hostnames, interface,
+  status, address type, server ID, assignment type, and latest expiration
+- Multiple DHCP leases for one MAC are combined under one Home Assistant device
+  without treating an IP address as device identity
+- Each DHCP device has a WiFi Client Match diagnostic based on an exact MAC
+  match
+- Wifi-client devices gain an **IP Assigned By** diagnostic when DHCP syncing is
+  enabled. It reports **DHCP Reserved** for a matching reserved lease, **DHCP**
+  for another matching lease, or **Static or Unknown** when the client's current
+  IP has no matching lease.
+
+DHCP synchronization is disabled by default and can be enabled independently
+for each FortiGate. If the endpoint is unavailable or the API account lacks
+permission, DHCP entities remain unavailable without blocking wifi monitoring.
 
 Some fields are absent on particular FortiOS or FortiAP versions. Those entities
 may be unavailable when the firewall does not provide the underlying value.
@@ -118,9 +170,13 @@ The access profile needs read access to these FortiGate permission groups:
 
 | Permission group | Access | Used for |
 | --- | --- | --- |
-| System (`sysgrp`) | Read | System status, firmware details, model, and hostname |
+| System (`sysgrp`) | Read | System status, firmware details, model, hostname, and optional DHCP leases |
 | Network (`netgrp`) | Read | ARP table on FortiOS 6.4 and newer |
 | Wifi Controller (`wifi`) | Read | Managed APs, clients, VAPs, and WTP profiles |
+
+The REST API access profile does not provide the FortiOS 6.2 ARP table. That
+version instead requires the separate read-only SNMPv2c configuration described
+above.
 
 Use a **global** access-profile scope so the required monitor and configuration
 endpoints are not blocked by VDOM-scoped permissions. Limit the REST API
@@ -131,6 +187,7 @@ The integration currently reads these API resources:
 
 - `/api/v2/monitor/system/status`
 - `/api/v2/monitor/system/firmware` on versions that require it
+- `/api/v2/monitor/system/dhcp` when DHCP lease synchronization is enabled
 - `/api/v2/cmdb/system/global` on versions that require it
 - `/api/v2/monitor/network/arp` on FortiOS 6.4 and newer
 - `/api/v2/monitor/wifi/managed_ap`
@@ -158,6 +215,13 @@ When adding a FortiGate, provide:
   The default is 60 seconds, and the allowed range is 5–300 seconds.
 - **Include unassigned SSIDs in filters:** Include every configured VAP in the
   SSID filter instead of only SSIDs assigned through active WTP profiles.
+- **Sync ARP table devices:** Create and maintain diagnostic devices for current
+  ARP entries. FortiOS 6.4+ uses the REST API. FortiOS 6.2 opens a separate,
+  clearly labeled SNMPv2c configuration and validation step.
+- **Match ARP entries with wifi clients:** Enable exact-MAC ARP/wifi links and
+  ARP fallback for wifi-client IP entities.
+- **Sync DHCP lease devices:** Create and maintain diagnostic devices for
+  current DHCP leases and add exact-MAC assignment diagnostics to wifi clients.
 
 ### Areas and labels
 
@@ -258,7 +322,7 @@ cards, both of which can be installed through HACS.
 
 ### Community dashboards
 
-On Home Assistant 2026.5 or newer, FortiOS KD registers four community
+On Home Assistant 2026.5 or newer, FortiOS KD registers five community
 dashboard strategies automatically. After restarting Home Assistant, open
 **Settings > Dashboards**, select **Add dashboard**, and choose:
 
@@ -270,10 +334,17 @@ dashboard strategies automatically. After restarting Home Assistant, open
 - **FortiOS KD ARP Entries** for current ARP-table devices and their optional
   wifi-client match and IP-conflict diagnostics. Its suggested title is
   **KD ARP Entries** and its suggested URL is `kd-arp-entries`.
-- **FortiOS KD ARP Table** for a compact table of current IP addresses,
-  interfaces, and MAC addresses, with direct links to ARP devices and exactly
-  matched wifi clients. Its suggested title is **KD ARP Table** and its
-  suggested URL is `kd-arp-table`.
+- **FortiOS KD ARP Table** for a compact, filterable table of current IP
+  addresses, interfaces, MAC addresses, sourced hostnames, and lease types,
+  with direct links to ARP devices and exactly matched wifi clients. Its
+  Firewall, Interface, and Lease type filters are independent of the Wifi
+  dashboard filters. Its suggested title is **KD ARP Table** and its suggested
+  URL is `kd-arp-table`.
+- **FortiOS KD DHCP Entries** for current DHCP-lease device cards, including
+  lease status, reservation type, expiration, server ID, and optional
+  wifi-client matches. Its independent FortiGate and Interface filters narrow
+  the displayed leases. Its suggested title is **KD DHCP Entries** and its
+  suggested URL is `kd-dhcp-entries`.
 
 The Wifi client dashboard explicitly excludes ARP devices. The Wifi client and
 graph dashboards share the FortiGate, AP, and SSID filter selects. The graph

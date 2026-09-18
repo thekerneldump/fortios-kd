@@ -3,7 +3,54 @@
 Notable changes and deliberate compatibility, security, and privacy decisions
 are recorded here for each release.
 
-## Unreleased
+## 0.5.0 - 2026-09-18
+
+### Added
+
+- Add a **KD DHCP Entries** community dashboard strategy with independent,
+  cascading FortiGate and Interface filters, current lease diagnostics, and
+  direct links to DHCP, FortiGate, and matched wifi-client devices.
+- Add a Hostname column to the KD ARP Table. It identifies managed access points
+  by board MAC or same-FortiGate management IP before preferring a live
+  wifi-client hostname, a current exact-MAC DHCP hostname, then the wifi
+  client's Last Known Hostname. Displayed values identify their **AP**, **WiFi**,
+  or **DHCP** source, and a neighboring Lease type column identifies current
+  DHCP matches as **Reserved** or **Leased**.
+- Add independent, cascading Firewall, Interface, and Lease type filters to the
+  KD ARP Table, including a **No DHCP lease** choice.
+- Add an explicitly version-gated FortiOS 6.2 SNMPv2c ARP fallback. It resolves
+  interface indices through `IF-MIB::ifName`, reads IPv4/MAC bindings from
+  `IP-MIB::ipNetToMediaPhysAddress`, validates the community during setup, and
+  feeds the existing ARP devices and dashboards. FortiOS 6.4+ continues to use
+  the REST monitor API.
+- Add optional per-FortiGate DHCP lease synchronization through
+  `/monitor/system/dhcp`. Leases are represented as separate devices grouped by
+  MAC, with IP, hostname, interface, status, assignment type, expiration,
+  address type, server ID, and exact wifi-client match diagnostics.
+- Add an **IP Assigned By** wifi-client diagnostic reporting **DHCP Reserved**,
+  **DHCP**, or **Static or Unknown** from the current exact-MAC/IP lease match.
+
+### Hostname and network identity improvements
+
+This release correlates AP, wifi-client, ARP, and DHCP observations instead of
+treating each source as an isolated value. Hostnames use a defined precedence
+and fallback order so missing data from one source does not leave an otherwise
+identifiable device unnamed. The dashboards show whether a displayed hostname
+came from an AP, a wifi client, or DHCP so that the result remains predictable
+and its source is visible.
+
+ARP entries also gain assignment context from exact-MAC DHCP and wifi-client
+matches. This distinguishes dynamic leases from reservations, shows when an ARP
+observation matches a known wireless client, and makes discrepancies between
+the independently collected data easier to investigate without treating an IP
+address as device identity.
+
+When Home Assistant Recorder is configured to retain these entities, its state
+history can preserve earlier ARP addresses and DHCP lease details. That history
+can help identify a device's previous IP after an outage or large reconnect and
+expose gaps in DHCP reservation coverage. Historical availability depends on
+the user's Recorder inclusion and retention settings; FortiOS KD does not
+maintain a separate historical archive or reverse-search index.
 
 ## 0.4.0 - 2026-09-17
 
@@ -67,10 +114,10 @@ are recorded here for each release.
   than a list of installed APs, and query `ap_channels` only for models matched
   to currently managed AP serial numbers. Allowed channels and DFS markers are
   intentionally not hardcoded because they may vary by regulatory context.
-- Skip `/monitor/network/arp` on FortiOS 6.2 because Fortinet did not add that
-  monitor endpoint until FortiOS 6.4. An unavailable or permission-restricted
-  ARP endpoint on a supported release does not block the integration's primary
-  wifi update.
+- Do not request `/monitor/network/arp` on FortiOS 6.2 because Fortinet did not
+  add that monitor endpoint until FortiOS 6.4. When explicitly configured, 6.2
+  obtains IPv4 ARP bindings through SNMPv2c instead. An unavailable API or SNMP
+  ARP source does not block the integration's primary wifi update.
 
 ## 0.3.0 - 2026-09-16
 

@@ -1,6 +1,8 @@
 const ARP_TABLE_CARD_ELEMENT = "fortios-kd-arp-table";
 const STRATEGY_ELEMENT = "ll-strategy-dashboard-fortios-kd-arp-table";
 const UNAVAILABLE_STATES = new Set(["unknown", "unavailable", ""]);
+const FILTER_ALL = "All";
+const FILTER_NO_DHCP_LEASE = "No DHCP lease";
 
 class FortiOSKDARPTableDashboardStrategy extends HTMLElement {
   static getCreateSuggestions(_hass) {
@@ -47,12 +49,46 @@ function registryEntry(registry, id) {
   return registry?.get?.(id) ?? registry?.[id];
 }
 
+function registryName(entry, fallback = "") {
+  return entry?.name_by_user || entry?.name || fallback;
+}
+
 function isCurrent(state) {
   return state && !UNAVAILABLE_STATES.has(state.state);
 }
 
+function currentStateValue(hass, entityId) {
+  const state = hass.states[entityId];
+  return isCurrent(state) ? state.state : undefined;
+}
+
+function currentStateValues(state) {
+  if (!isCurrent(state)) {
+    return [];
+  }
+
+  return String(state.state)
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function scopedIpKey(fortigateDeviceId, ipAddress) {
+  return `${fortigateDeviceId}\u0000${ipAddress}`;
+}
+
 function arpTableModel(hass) {
-  const wifiDevicesByMatchId = new Map();
+  const selectedFortigate =
+    currentStateValue(hass, "select.arp_table_fortigate_filter") || FILTER_ALL;
+  const selectedInterface =
+    currentStateValue(hass, "select.arp_table_interface_filter") || FILTER_ALL;
+  const selectedLeaseType =
+    currentStateValue(hass, "select.arp_table_lease_type_filter") || FILTER_ALL;
+  const wifiClientsByMatchId = new Map();
+  const dhcpHostnamesByMatchId = new Map();
+  const dhcpLeaseTypesByMatchId = new Map();
+  const accessPointsByMatchId = new Map();
+  const accessPointsByScopedIp = new Map();
   const entriesByDevice = new Map();
 
   for (const state of Object.values(hass.states)) {
@@ -63,8 +99,61 @@ function arpTableModel(hass) {
 
     if (state.attributes.fortios_kd_entry_type === "wifi_client") {
       const matchId = state.attributes.fortios_kd_match_id;
-      if (matchId) {
-        wifiDevicesByMatchId.set(matchId, entity.device_id);
+      const macSuffix = "_mac_address";
+      if (matchId && state.entity_id.endsWith(macSuffix)) {
+        const base = state.entity_id.slice(0, -macSuffix.length);
+        wifiClientsByMatchId.set(matchId, {
+          deviceId: entity.device_id,
+          available: isCurrent(state),
+          hostname: currentStateValue(hass, `${base}_hostname`),
+          lastKnownHostname: currentStateValue(
+            hass,
+            `${base}_last_known_hostname`,
+          ),
+        });
+      }
+      continue;
+    }
+
+    if (state.attributes.fortios_kd_entry_type === "dhcp_entry") {
+      const matchId = state.attributes.fortios_kd_match_id;
+      const field = state.attributes.fortios_kd_dhcp_field;
+      if (matchId && isCurrent(state)) {
+        if (field === "hostnames") {
+          dhcpHostnamesByMatchId.set(matchId, state.state);
+        } else if (field === "assignment_type") {
+          const leaseType =
+            state.state === "DHCP Reserved"
+              ? "Reserved"
+              : state.state === "DHCP"
+                ? "Leased"
+                : undefined;
+          if (leaseType) {
+            dhcpLeaseTypesByMatchId.set(matchId, leaseType);
+          }
+        }
+      }
+      continue;
+    }
+
+    if (state.attributes.fortios_kd_entry_type === "access_point") {
+      const device = registryEntry(hass.devices, entity.device_id);
+      const field = state.attributes.fortios_kd_ap_field;
+      const matchId = state.attributes.fortios_kd_match_id;
+      const accessPoint = {
+        deviceId: entity.device_id,
+        name: registryName(device, "Access Point"),
+      };
+
+      if (field === "mac_address" && matchId && isCurrent(state)) {
+        accessPointsByMatchId.set(matchId, accessPoint);
+      } else if (field === "ip_address" && device?.via_device_id) {
+        for (const ipAddress of currentStateValues(state)) {
+          accessPointsByScopedIp.set(
+            scopedIpKey(device.via_device_id, ipAddress),
+            accessPoint,
+          );
+        }
       }
       continue;
     }
@@ -100,19 +189,69 @@ function arpTableModel(hass) {
     const ipState = entry.fields.get("ip_addresses");
     const interfaceState = entry.fields.get("interfaces");
     const matchState = entry.fields.get("wifi_client_match");
-    const hasWifiMatch =
-      isCurrent(matchState) && matchState.state !== "Not currently detected";
-    const wifiDeviceId =
-      hasWifiMatch && entry.matchId
-        ? wifiDevicesByMatchId.get(entry.matchId)
+    const arpDevice = registryEntry(hass.devices, entry.deviceId);
+    const fortigateDevice = registryEntry(
+      hass.devices,
+      arpDevice?.via_device_id,
+    );
+    const fortigateName =
+      fortigateDevice?.name || registryName(fortigateDevice, "FortiGate");
+    const accessPointByMac = entry.matchId
+      ? accessPointsByMatchId.get(entry.matchId)
+      : undefined;
+    const accessPointByIp = arpDevice?.via_device_id
+      ? currentStateValues(ipState)
+          .map((ipAddress) =>
+            accessPointsByScopedIp.get(
+              scopedIpKey(arpDevice.via_device_id, ipAddress),
+            ),
+          )
+          .find(Boolean)
+      : undefined;
+    const accessPoint = accessPointByMac || accessPointByIp;
+    const wifiClient =
+      isCurrent(matchState) && entry.matchId
+        ? wifiClientsByMatchId.get(entry.matchId)
         : undefined;
+    const dhcpHostname = entry.matchId
+      ? dhcpHostnamesByMatchId.get(entry.matchId)
+      : undefined;
+    const dhcpLeaseType = entry.matchId
+      ? dhcpLeaseTypesByMatchId.get(entry.matchId)
+      : undefined;
+    const hostname =
+      accessPoint?.name
+        ? `${accessPoint.name} (AP)`
+        : wifiClient?.available && wifiClient.hostname
+        ? `${wifiClient.hostname} (WiFi)`
+        : dhcpHostname
+          ? `${dhcpHostname} (DHCP)`
+          : wifiClient?.lastKnownHostname
+            ? `(${wifiClient.lastKnownHostname}) (WiFi)`
+            : undefined;
+
+    const interfaces = currentStateValues(interfaceState);
+    const leaseFilterValue = dhcpLeaseType || FILTER_NO_DHCP_LEASE;
+    if (
+      (selectedFortigate !== FILTER_ALL &&
+        selectedFortigate !== fortigateName) ||
+      (selectedInterface !== FILTER_ALL &&
+        !interfaces.includes(selectedInterface)) ||
+      (selectedLeaseType !== FILTER_ALL &&
+        selectedLeaseType !== leaseFilterValue)
+    ) {
+      continue;
+    }
 
     rows.push({
       deviceId: entry.deviceId,
+      fortigateName,
       ipAddress: isCurrent(ipState) ? ipState.state : "—",
       interfaceName: isCurrent(interfaceState) ? interfaceState.state : "—",
       macAddress: macState.state,
-      wifiDeviceId,
+      hostname: hostname || "—",
+      dhcpLeaseType: dhcpLeaseType || "—",
+      wifiDeviceId: wifiClient?.deviceId,
     });
   }
 
@@ -128,8 +267,11 @@ function arpTableModel(hass) {
         row.ipAddress,
         row.interfaceName,
         row.macAddress,
+        row.hostname,
+        row.dhcpLeaseType,
         row.wifiDeviceId || "",
       ])
+      .concat([selectedFortigate, selectedInterface, selectedLeaseType])
       .join("\u001e"),
   };
 }
@@ -245,7 +387,7 @@ class FortiOSKDARPTable extends HTMLElement {
       const empty = document.createElement("div");
       empty.className = "empty";
       empty.textContent =
-        "No current ARP entries. Enable ARP synchronization on a supported FortiGate hub.";
+        "No current ARP entries match the selected filters.";
       card.append(empty);
       this.shadowRoot.replaceChildren(style, card);
       return;
@@ -261,6 +403,8 @@ class FortiOSKDARPTable extends HTMLElement {
       "IP address",
       "Interface",
       "MAC address",
+      "Hostname",
+      "Lease type",
       "WiFi",
     ]) {
       const heading = document.createElement("th");
@@ -286,6 +430,8 @@ class FortiOSKDARPTable extends HTMLElement {
         textCell(row.ipAddress),
         textCell(row.interfaceName),
         textCell(row.macAddress),
+        textCell(row.hostname),
+        textCell(row.dhcpLeaseType),
       );
 
       const wifiCell = document.createElement("td");
@@ -309,6 +455,28 @@ if (!customElements.get(ARP_TABLE_CARD_ELEMENT)) {
   customElements.define(ARP_TABLE_CARD_ELEMENT, FortiOSKDARPTable);
 }
 
+function filterCard() {
+  return {
+    type: "entities",
+    title: "ARP Table Filters",
+    entities: [
+      {
+        entity: "select.arp_table_fortigate_filter",
+        name: "Firewall",
+      },
+      {
+        entity: "select.arp_table_interface_filter",
+        name: "Interface",
+      },
+      {
+        entity: "select.arp_table_lease_type_filter",
+        name: "Lease type",
+      },
+    ],
+    grid_options: { columns: "full" },
+  };
+}
+
 function dashboardView() {
   return {
     title: "ARP Table",
@@ -325,6 +493,7 @@ function dashboardView() {
             heading: "ARP Table",
             heading_style: "title",
           },
+          filterCard(),
           {
             type: `custom:${ARP_TABLE_CARD_ELEMENT}`,
             grid_options: { columns: "full" },

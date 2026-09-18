@@ -130,7 +130,7 @@ async def test_existing_label_is_applied_to_every_device(
     )
 
     label_registry = lr.async_get(hass)
-    label = label_registry.async_create("Other House", color="#ABCDEF")
+    label = label_registry.async_create("Example Place", color="#ABCDEF")
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
@@ -196,7 +196,7 @@ async def test_hub_label_changes_propagate_when_enabled(
     )
 
     label_registry = lr.async_get(hass)
-    base_label = label_registry.async_create("Other House")
+    base_label = label_registry.async_create("Example Place")
     inherited_label = label_registry.async_create("Inherited")
     ap_only_label = label_registry.async_create("AP only")
     client_only_label = label_registry.async_create("Client only")
