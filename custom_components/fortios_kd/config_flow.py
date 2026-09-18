@@ -13,6 +13,7 @@ from homeassistant.helpers import area_registry as ar, label_registry as lr, sel
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import FortiOSApi
+from .api.version import FortiOSVersion, version_family
 from .const import (
     CONF_CLIENTS_FOLLOW_AP_AREA,
     CONF_CLIENTS_FOLLOW_AP_LABELS,
@@ -35,7 +36,10 @@ from .const import (
     CONF_NEW_HUB_LABEL_NAME,
     CONF_ORGANIZATION_MODE,
     CONF_REQUEST_TIMEOUT,
+    CONF_SNMP_COMMUNITY,
+    CONF_SNMP_PORT,
     CONF_SYNC_ARP_TABLE,
+    CONF_SYNC_DHCP_LEASES,
     DEFAULT_CLIENTS_FOLLOW_AP_AREA,
     DEFAULT_CLIENTS_FOLLOW_AP_LABELS,
     DEFAULT_DEVICES_FOLLOW_HUB_LABELS,
@@ -52,7 +56,10 @@ from .const import (
     DEFAULT_MOVE_DEVICES_WITH_HUB,
     DEFAULT_ORGANIZATION_MODE,
     DEFAULT_REQUEST_TIMEOUT,
+    DEFAULT_SNMP_PORT,
+    DEFAULT_SNMP_TIMEOUT,
     DEFAULT_SYNC_ARP_TABLE,
+    DEFAULT_SYNC_DHCP_LEASES,
     DEFAULT_VERIFY_SSL,
     DOMAIN,
     ORGANIZATION_MODE_AREA,
@@ -61,6 +68,7 @@ from .const import (
     ORGANIZATION_MODE_NONE,
 )
 from .organization import FortiOSKDOrganizationManager
+from .snmp_arp import FortiOSKDSnmpArpClient, SnmpArpError
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
@@ -95,6 +103,10 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Optional(
             CONF_MATCH_ARP_WIFI_CLIENTS,
             default=DEFAULT_MATCH_ARP_WIFI_CLIENTS,
+        ): selector.BooleanSelector(),
+        vol.Optional(
+            CONF_SYNC_DHCP_LEASES,
+            default=DEFAULT_SYNC_DHCP_LEASES,
         ): selector.BooleanSelector(),
         vol.Optional(
             CONF_ORGANIZATION_MODE,
@@ -187,6 +199,25 @@ LABEL_ORGANIZATION_SCHEMA = vol.Schema(
     }
 )
 
+SNMP_ARP_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_SNMP_COMMUNITY): selector.TextSelector(
+            selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+        ),
+        vol.Optional(
+            CONF_SNMP_PORT,
+            default=DEFAULT_SNMP_PORT,
+        ): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=1,
+                max=65535,
+                step=1,
+                mode=selector.NumberSelectorMode.BOX,
+            )
+        ),
+    }
+)
+
 AREA_ORGANIZATION_KEYS = {
     CONF_HUB_AREA_ID,
     CONF_NEW_HUB_AREA_NAME,
@@ -251,6 +282,7 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     _pending_data: dict[str, Any]
+    _pending_version: FortiOSVersion
 
     def _validate_area(
         self,
@@ -333,6 +365,12 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def _async_finish_configuration(self) -> ConfigFlowResult:
         """Create or update the config entry after organization choices."""
         self._clean_organization_data(self._pending_data)
+        if not (
+            self._pending_data.get(CONF_SYNC_ARP_TABLE)
+            and version_family(self._pending_version, "6.2")
+        ):
+            self._pending_data.pop(CONF_SNMP_COMMUNITY, None)
+            self._pending_data.pop(CONF_SNMP_PORT, None)
         host = self._pending_data[CONF_HOST]
         port = self._pending_data[CONF_PORT]
 
@@ -361,6 +399,56 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if mode == ORGANIZATION_MODE_LABEL:
             return await self.async_step_label_organization()
         return await self._async_finish_configuration()
+
+    async def _async_continue_after_connection(self) -> ConfigFlowResult:
+        """Request 6.2-only SNMP settings when ARP synchronization is enabled."""
+        if self._pending_data.get(CONF_SYNC_ARP_TABLE) and version_family(
+            self._pending_version,
+            "6.2",
+        ):
+            return await self.async_step_snmp_arp()
+        return await self._async_continue_organization()
+
+    async def async_step_snmp_arp(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        """Configure and validate the FortiOS 6.2 SNMPv2c ARP fallback."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            community = str(user_input.get(CONF_SNMP_COMMUNITY, "")).strip()
+            port = int(user_input.get(CONF_SNMP_PORT, DEFAULT_SNMP_PORT))
+            user_input[CONF_SNMP_COMMUNITY] = community
+            user_input[CONF_SNMP_PORT] = port
+            if not community:
+                errors[CONF_SNMP_COMMUNITY] = "snmp_community_required"
+            else:
+                snmp_client = FortiOSKDSnmpArpClient(
+                    self.hass,
+                    self._pending_data[CONF_HOST],
+                    community,
+                    port,
+                    DEFAULT_SNMP_TIMEOUT,
+                )
+                try:
+                    await snmp_client.async_get_arp_table()
+                except (SnmpArpError, TimeoutError, ValueError):
+                    errors["base"] = "snmp_cannot_connect"
+                else:
+                    self._pending_data.update(user_input)
+                    return await self._async_continue_organization()
+
+        suggested = dict(self._pending_data)
+        if user_input is not None:
+            suggested.update(user_input)
+        return self.async_show_form(
+            step_id="snmp_arp",
+            data_schema=self.add_suggested_values_to_schema(
+                SNMP_ARP_SCHEMA,
+                suggested,
+            ),
+            errors=errors,
+        )
 
     async def async_step_area_organization(
         self,
@@ -433,7 +521,7 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._abort_if_unique_id_mismatch()
 
             try:
-                await async_validate_input(self.hass, user_input)
+                status = await async_validate_input(self.hass, user_input)
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
             except CannotConnect:
@@ -441,7 +529,8 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 self._pending_data = dict(entry.data)
                 self._pending_data.update(user_input)
-                return await self._async_continue_organization()
+                self._pending_version = FortiOSVersion.parse(status["version"])
+                return await self._async_continue_after_connection()
 
         return self.async_show_form(
             step_id="reconfigure",
@@ -468,14 +557,15 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._abort_if_unique_id_configured()
 
             try:
-                await async_validate_input(self.hass, user_input)
+                status = await async_validate_input(self.hass, user_input)
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             else:
                 self._pending_data = user_input
-                return await self._async_continue_organization()
+                self._pending_version = FortiOSVersion.parse(status["version"])
+                return await self._async_continue_after_connection()
 
         return self.async_show_form(
             step_id="user",

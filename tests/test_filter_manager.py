@@ -32,6 +32,25 @@ def _mock_coordinator(access_point: str, ssid: str) -> Mock:
         "wifi_clients": {"results": []},
     }
     coordinator.async_add_listener.return_value = Mock()
+    coordinator.sync_arp_table = True
+    coordinator.sync_dhcp_leases = True
+    coordinator.arp_macs = {"aa:bb:cc:dd:ee:ff"}
+    coordinator.get_arp_entries.return_value = [
+        {
+            "mac": "aa:bb:cc:dd:ee:ff",
+            "ip": "192.0.2.10",
+            "interface": "lan",
+        }
+    ]
+    coordinator.get_dhcp_entries.return_value = [
+        {
+            "mac": "aa:bb:cc:dd:ee:ff",
+            "ip": "192.0.2.10",
+            "interface": "lan",
+            "reserved": False,
+        }
+    ]
+    coordinator.dhcp_macs = {"aa:bb:cc:dd:ee:ff"}
     return coordinator
 
 
@@ -341,7 +360,7 @@ async def test_fortios_62_automatic_tunnel_assignment(hass: Any) -> None:
 
 
 async def test_select_entities(hass: Any) -> None:
-    """Test the five shared select entities and dependent options."""
+    """Test the shared select entities and their dependent options."""
     from custom_components.fortios_kd.const import (  # noqa: PLC0415
         DATA_FILTER_MANAGER,
         DOMAIN,
@@ -386,8 +405,19 @@ async def test_select_entities(hass: Any) -> None:
         labels={label.label_id},
     )
 
-    assert len(entities) == 5
-    fortigate, access_point, ssid, area_filter, label_filter = entities
+    assert len(entities) == 10
+    (
+        fortigate,
+        access_point,
+        ssid,
+        area_filter,
+        label_filter,
+        arp_fortigate,
+        arp_interface,
+        arp_lease_type,
+        dhcp_fortigate,
+        dhcp_interface,
+    ) = entities
     assert fortigate.options == ["All", "AlphaGate", "BetaGate"]
 
     await fortigate.async_select_option("AlphaGate")
@@ -400,6 +430,23 @@ async def test_select_entities(hass: Any) -> None:
     await label_filter.async_select_option("Trusted")
     assert manager.selected_area == "Office"
     assert manager.selected_label == "Trusted"
+
+    assert arp_fortigate.options == ["All", "AlphaGate", "BetaGate"]
+    await arp_fortigate.async_select_option("AlphaGate")
+    assert arp_interface.options == ["All", "lan"]
+    await arp_interface.async_select_option("lan")
+    assert arp_lease_type.options == ["All", "Leased"]
+    await arp_lease_type.async_select_option("Leased")
+    assert manager.selected_arp_fortigate == "AlphaGate"
+    assert manager.selected_arp_interface == "lan"
+    assert manager.selected_arp_lease_type == "Leased"
+
+    assert dhcp_fortigate.options == ["All", "AlphaGate", "BetaGate"]
+    await dhcp_fortigate.async_select_option("AlphaGate")
+    assert dhcp_interface.options == ["All", "lan"]
+    await dhcp_interface.async_select_option("lan")
+    assert manager.selected_dhcp_fortigate == "AlphaGate"
+    assert manager.selected_dhcp_interface == "lan"
 
     duplicate_entities: list[Any] = []
     await async_setup_entry(

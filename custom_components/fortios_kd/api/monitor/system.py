@@ -25,3 +25,7 @@ class FortiOSSystemApi:
     async def get_firmware(self) -> dict[str, Any]:
         """Return firmware and platform information."""
         return await self._http.get("monitor/system/firmware")
+
+    async def get_dhcp_leases(self) -> dict[str, Any]:
+        """Return current DHCP leases."""
+        return await self._http.get("monitor/system/dhcp")

@@ -1,5 +1,6 @@
 """Tests for FortiOS KD sensors."""
 
+from datetime import UTC, datetime
 from hashlib import sha256
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -64,6 +65,216 @@ def test_registered_arp_macs() -> None:
     ]
 
     assert _registered_arp_macs(entries, "FGT123") == {"aa:bb:cc:dd:ee:ff"}
+
+
+def test_registered_dhcp_macs() -> None:
+    """Test extracting previously registered DHCP devices."""
+    from custom_components.fortios_kd.sensor import (  # noqa: PLC0415
+        _registered_dhcp_macs,
+    )
+
+    entries = [
+        SimpleNamespace(
+            domain="sensor",
+            platform="fortios_kd",
+            unique_id="FGT123_dhcp_aa:bb:cc:dd:ee:ff_ip_addresses",
+        ),
+        SimpleNamespace(
+            domain="sensor",
+            platform="fortios_kd",
+            unique_id="FGT123_dhcp_aa:bb:cc:dd:ee:ff_hostnames",
+        ),
+        SimpleNamespace(
+            domain="sensor",
+            platform="fortios_kd",
+            unique_id="FGT999_dhcp_11:22:33:44:55:66_ip_addresses",
+        ),
+    ]
+
+    assert _registered_dhcp_macs(entries, "FGT123") == {"aa:bb:cc:dd:ee:ff"}
+
+
+def test_ap_network_entities_expose_dashboard_matching_metadata() -> None:
+    """Test AP management IP and board MAC entities can enrich ARP rows."""
+    from custom_components.fortios_kd.sensor import (  # noqa: PLC0415
+        FortiGateAPBoardMAC,
+        FortiGateAPConnectingFrom,
+    )
+
+    mac = "aa:bb:cc:dd:ee:ff"
+    match_id = sha256(f"fortios_kd\0FGT123\0{mac}".encode()).hexdigest()
+    ap = {
+        "serial": "FAP123",
+        "board_mac": mac,
+        "connecting_from": "192.0.2.10",
+    }
+
+    board_mac = FortiGateAPBoardMAC(ap, "FGT123")
+    connecting_from = FortiGateAPConnectingFrom(ap, "FGT123")
+
+    assert board_mac.extra_state_attributes == {
+        "fortios_kd_entry_type": "access_point",
+        "fortios_kd_ap_field": "mac_address",
+        "fortios_kd_match_id": match_id,
+    }
+    assert connecting_from.extra_state_attributes == {
+        "fortios_kd_entry_type": "access_point",
+        "fortios_kd_ap_field": "ip_address",
+        "fortios_kd_match_id": match_id,
+    }
+
+
+def test_dhcp_entities_use_separate_device_and_aggregate_rows() -> None:
+    """Test DHCP rows use a separate device and retain duplicate-MAC leases."""
+    from custom_components.fortios_kd.sensor import (  # noqa: PLC0415
+        create_dhcp_entities,
+    )
+
+    mac = "aa:bb:cc:dd:ee:ff"
+    match_id = sha256(f"fortios_kd\0FGT123\0{mac}".encode()).hexdigest()
+    entries = [
+        {
+            "mac": mac,
+            "ip": "192.0.2.10",
+            "hostname": "TestPhone",
+            "interface": "lan",
+            "status": "leased",
+            "reserved": False,
+            "expire_time": 1790037166,
+            "type": "ipv4",
+            "server_mkey": 21,
+        },
+        {
+            "mac": mac,
+            "ip": "192.0.2.11",
+            "hostname": "TestPhone-Backup",
+            "interface": "guest",
+            "status": "leased",
+            "reserved": True,
+            "expire_time": 1790083210,
+            "type": "ipv4",
+            "server_mkey": 22,
+        },
+    ]
+    coordinator = Mock()
+    coordinator.last_update_success = True
+    coordinator.dhcp_data_available = True
+    coordinator.get_dhcp_entries.return_value = entries
+    coordinator.get_wifi_client.return_value = {
+        "mac": mac,
+        "hostname": "TestPhone",
+    }
+
+    entities = create_dhcp_entities(
+        coordinator,
+        mac,
+        "FGT123",
+        "TestGate",
+        False,
+        False,
+    )
+
+    assert {entity.name: entity.native_value for entity in entities} == {
+        "DHCP MAC Address": mac,
+        "DHCP IP Addresses": "192.0.2.10, 192.0.2.11",
+        "DHCP Hostnames": "TestPhone, TestPhone-Backup",
+        "DHCP Interfaces": "guest, lan",
+        "DHCP Statuses": "leased",
+        "IP Assignment Type": "DHCP Reserved",
+        "Latest Lease Expiration": datetime.fromtimestamp(1790083210, tz=UTC),
+        "DHCP Address Types": "ipv4",
+        "DHCP Server IDs": "21, 22",
+        "WiFi Client Match": "TestPhone",
+    }
+    assert entities[0].device_info["identifiers"] == {
+        ("fortios_kd", f"FGT123_dhcp_{mac}")
+    }
+    assert entities[0].device_info["name"] == f"DHCP Device {mac} (TestGate)"
+    assert entities[0].extra_state_attributes == {
+        "fortios_kd_entry_type": "dhcp_entry",
+        "fortios_kd_dhcp_field": "mac_address",
+        "fortios_kd_match_id": match_id,
+    }
+
+
+def test_wifi_client_ip_assignment_uses_exact_current_lease() -> None:
+    """Test wifi assignment source matches both MAC and current IP address."""
+    from custom_components.fortios_kd.sensor import (  # noqa: PLC0415
+        FortiGateWiFiClientIPAssignedBy,
+    )
+
+    mac = "aa:bb:cc:dd:ee:ff"
+    coordinator = Mock()
+    coordinator.last_update_success = True
+    coordinator.dhcp_data_available = True
+    coordinator.get_wifi_client.return_value = {
+        "mac": mac,
+        "ip": "192.0.2.10",
+    }
+    coordinator.get_dhcp_entries.return_value = [
+        {"mac": mac, "ip": "192.0.2.10", "reserved": True},
+        {"mac": mac, "ip": "192.0.2.20", "reserved": False},
+    ]
+    entity = FortiGateWiFiClientIPAssignedBy(coordinator, {"mac": mac}, "FGT123")
+
+    assert entity.available
+    assert entity.native_value == "DHCP Reserved"
+
+    coordinator.get_wifi_client.return_value = {
+        "mac": mac,
+        "ip": "192.0.2.20",
+    }
+
+    assert entity.native_value == "DHCP"
+
+    coordinator.get_wifi_client.return_value = {
+        "mac": mac,
+        "ip": "192.0.2.30",
+    }
+
+    assert entity.native_value == "Static or Unknown"
+
+    coordinator.dhcp_data_available = False
+
+    assert not entity.available
+
+
+def test_dhcp_entities_mask_mac_and_hostnames() -> None:
+    """Test DHCP devices apply the existing screen-sharing privacy controls."""
+    from custom_components.fortios_kd.sensor import (  # noqa: PLC0415
+        create_dhcp_entities,
+    )
+
+    mac = "aa:bb:cc:dd:ee:ff"
+    coordinator = Mock()
+    coordinator.last_update_success = True
+    coordinator.dhcp_data_available = True
+    coordinator.get_dhcp_entries.return_value = [
+        {
+            "mac": mac,
+            "ip": "192.0.2.10",
+            "hostname": "TestPhone",
+            "reserved": False,
+        }
+    ]
+    coordinator.get_wifi_client.return_value = {
+        "mac": mac,
+        "hostname": "OtherPhone",
+    }
+
+    entities = create_dhcp_entities(
+        coordinator,
+        mac,
+        "FGT123",
+        "TestGate",
+        True,
+        True,
+    )
+    values = {entity.name: entity.native_value for entity in entities}
+
+    assert values["DHCP MAC Address"] == "aa:bb:cc:**:**:**"
+    assert values["DHCP Hostnames"] == "Test*****"
+    assert values["WiFi Client Match"] == "Othe******"
 
 
 def test_arp_entities_use_separate_device_and_aggregate_rows() -> None:

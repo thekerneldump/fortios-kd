@@ -1,5 +1,7 @@
 """Tests for the FortiOS-KD config flow."""
 
+from unittest.mock import patch
+
 from homeassistant import config_entries
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_PORT, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
@@ -19,6 +21,9 @@ CONF_MASK_AP_NAMES = "mask_ap_names"
 CONF_INCLUDE_UNASSIGNED_SSIDS = "include_unassigned_ssids"
 CONF_SYNC_ARP_TABLE = "sync_arp_table"
 CONF_MATCH_ARP_WIFI_CLIENTS = "match_arp_wifi_clients"
+CONF_SYNC_DHCP_LEASES = "sync_dhcp_leases"
+CONF_SNMP_COMMUNITY = "snmp_community"
+CONF_SNMP_PORT = "snmp_port"
 CONF_REQUEST_TIMEOUT = "request_timeout"
 CONF_ORGANIZATION_MODE = "organization_mode"
 CONF_HUB_AREA_ID = "hub_area_id"
@@ -61,6 +66,7 @@ async def test_user_flow(
             CONF_INCLUDE_UNASSIGNED_SSIDS: False,
             CONF_SYNC_ARP_TABLE: False,
             CONF_MATCH_ARP_WIFI_CLIENTS: True,
+            CONF_SYNC_DHCP_LEASES: False,
             CONF_MASK_SERIAL_NUMBERS: True,
             CONF_MASK_SSIDS: True,
             CONF_MASK_CLIENT_MACS: True,
@@ -81,6 +87,7 @@ async def test_user_flow(
         CONF_INCLUDE_UNASSIGNED_SSIDS: False,
         CONF_SYNC_ARP_TABLE: False,
         CONF_MATCH_ARP_WIFI_CLIENTS: True,
+        CONF_SYNC_DHCP_LEASES: False,
         CONF_ORGANIZATION_MODE: "none",
         CONF_MASK_SERIAL_NUMBERS: True,
         CONF_MASK_SSIDS: True,
@@ -119,6 +126,61 @@ async def test_user_flow_invalid_auth(
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
     assert result["errors"] == {"base": "invalid_auth"}
+
+
+async def test_fortios_62_arp_sync_requests_snmp_settings(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """Test ARP synchronization on 6.2 requires validated SNMPv2c settings."""
+    aioclient_mock.get(
+        f"{BASE_URL}/monitor/system/status",
+        json={"version": "v6.2.17", "results": {}},
+    )
+    aioclient_mock.get(
+        f"{BASE_URL}/cmdb/system/global?format=hostname",
+        json={"results": {"hostname": "FortiGate-62"}},
+    )
+    aioclient_mock.get(
+        f"{BASE_URL}/monitor/system/firmware",
+        json={"results": {"current": {"platform-id": "FGT80E"}}},
+    )
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_USER},
+    )
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_HOST: "FGT.Example.Local",
+            CONF_API_KEY: "test-api-key",
+            CONF_PORT: 8443,
+            CONF_VERIFY_SSL: True,
+            CONF_SYNC_ARP_TABLE: True,
+        },
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "snmp_arp"
+
+    with patch(
+        "custom_components.fortios_kd.config_flow."
+        "FortiOSKDSnmpArpClient.async_get_arp_table",
+        return_value={"results": [], "supported": True, "source": "snmp"},
+    ) as get_arp_table:
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_SNMP_COMMUNITY: "readonly-community",
+                CONF_SNMP_PORT: 161,
+            },
+        )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_SNMP_COMMUNITY] == "readonly-community"
+    assert result["data"][CONF_SNMP_PORT] == 161
+    get_arp_table.assert_awaited_once_with()
 
 
 async def test_reconfigure_invalid_auth(
@@ -234,11 +296,11 @@ async def test_area_organization_creates_typed_area(
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        {CONF_NEW_HUB_AREA_NAME: "Other House"},
+        {CONF_NEW_HUB_AREA_NAME: "Example Place"},
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    area = ar.async_get(hass).async_get_area_by_name("Other House")
+    area = ar.async_get(hass).async_get_area_by_name("Example Place")
     assert area is not None
     assert result["data"][CONF_HUB_AREA_ID] == area.id
     assert CONF_NEW_HUB_AREA_NAME not in result["data"]
@@ -250,7 +312,7 @@ async def test_label_organization_uses_existing_label(
 ) -> None:
     """Test that selecting a label stores its ID without changing its color."""
     label_registry = lr.async_get(hass)
-    label = label_registry.async_create("Other House", color="#ABCDEF")
+    label = label_registry.async_create("Example Place", color="#ABCDEF")
     aioclient_mock.get(
         f"{BASE_URL}/monitor/system/status",
         json={"version": "v6.4.16", "build": 2098},
@@ -316,13 +378,13 @@ async def test_label_organization_creates_typed_label(
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
-            CONF_NEW_HUB_LABEL_NAME: "Other House",
+            CONF_NEW_HUB_LABEL_NAME: "Example Place",
             CONF_HUB_LABEL_COLOR: [18, 52, 86],
         },
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    label = lr.async_get(hass).async_get_label_by_name("Other House")
+    label = lr.async_get(hass).async_get_label_by_name("Example Place")
     assert label is not None
     assert label.color == "#123456"
     assert result["data"][CONF_HUB_LABEL_ID] == label.label_id
@@ -334,8 +396,8 @@ async def test_both_organization_uses_area_and_label(
     aioclient_mock: AiohttpClientMocker,
 ) -> None:
     """Test configuring both area and label organization."""
-    area = ar.async_get(hass).async_create("Other House")
-    label = lr.async_get(hass).async_create("The Grains", color="#00CC88")
+    area = ar.async_get(hass).async_create("Example Place")
+    label = lr.async_get(hass).async_create("Example Label", color="#00CC88")
     aioclient_mock.get(
         f"{BASE_URL}/monitor/system/status",
         json={"version": "v6.4.16", "build": 2098},
