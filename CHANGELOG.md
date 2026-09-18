@@ -30,6 +30,28 @@ are recorded here for each release.
 - Add an **IP Assigned By** wifi-client diagnostic reporting **DHCP Reserved**,
   **DHCP**, or **Static or Unknown** from the current exact-MAC/IP lease match.
 
+### Hostname and network identity improvements
+
+This release correlates AP, wifi-client, ARP, and DHCP observations instead of
+treating each source as an isolated value. Hostnames use a defined precedence
+and fallback order so missing data from one source does not leave an otherwise
+identifiable device unnamed. The dashboards show whether a displayed hostname
+came from an AP, a wifi client, or DHCP so that the result remains predictable
+and its source is visible.
+
+ARP entries also gain assignment context from exact-MAC DHCP and wifi-client
+matches. This distinguishes dynamic leases from reservations, shows when an ARP
+observation matches a known wireless client, and makes discrepancies between
+the independently collected data easier to investigate without treating an IP
+address as device identity.
+
+When Home Assistant Recorder is configured to retain these entities, its state
+history can preserve earlier ARP addresses and DHCP lease details. That history
+can help identify a device's previous IP after an outage or large reconnect and
+expose gaps in DHCP reservation coverage. Historical availability depends on
+the user's Recorder inclusion and retention settings; FortiOS KD does not
+maintain a separate historical archive or reverse-search index.
+
 ## 0.4.0 - 2026-09-17
 
 ### Added
