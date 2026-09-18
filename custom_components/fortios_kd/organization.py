@@ -29,7 +29,7 @@ from .const import (
     ORGANIZATION_MODE_BOTH,
     ORGANIZATION_MODE_LABEL,
 )
-from .coordinator import FortiOSKDCoordinator
+from .coordinator import FortiOSKDCoordinator, normalize_mac_address
 
 CLIENT_IDENTIFIER_MARKER = "_wifi_client_"
 
@@ -422,12 +422,14 @@ class FortiOSKDOrganizationManager:
         for client in self._coordinator.data.get("wifi_clients", {}).get("results", []):
             mac = client.get("mac")
             ap_serial = client.get("wtp_id")
-            if not isinstance(mac, str) or not isinstance(ap_serial, str):
+            normalized_mac = normalize_mac_address(mac)
+            if normalized_mac is None or not isinstance(ap_serial, str):
                 continue
             client_device = self._device_registry.async_get_device_by_identifier(
                 (
                     DOMAIN,
-                    f"{self._fortigate_serial}{CLIENT_IDENTIFIER_MARKER}{mac.lower()}",
+                    f"{self._fortigate_serial}{CLIENT_IDENTIFIER_MARKER}"
+                    f"{normalized_mac}",
                 ),
                 self._entry.entry_id,
             )
@@ -457,11 +459,7 @@ class FortiOSKDOrganizationManager:
         for client in self._coordinator.data.get("wifi_clients", {}).get("results", []):
             client_mac = client.get("mac")
             ap_serial = client.get("wtp_id")
-            if (
-                isinstance(client_mac, str)
-                and client_mac.lower() == mac
-                and isinstance(ap_serial, str)
-            ):
+            if normalize_mac_address(client_mac) == mac and isinstance(ap_serial, str):
                 return self._device_registry.async_get_device_by_identifier(
                     (DOMAIN, ap_serial),
                     self._entry.entry_id,
@@ -473,12 +471,14 @@ class FortiOSKDOrganizationManager:
         devices: list[dr.DeviceEntry] = []
         for client in self._coordinator.data.get("wifi_clients", {}).get("results", []):
             mac = client.get("mac")
-            if not isinstance(mac, str):
+            normalized_mac = normalize_mac_address(mac)
+            if normalized_mac is None:
                 continue
             device = self._device_registry.async_get_device_by_identifier(
                 (
                     DOMAIN,
-                    f"{self._fortigate_serial}{CLIENT_IDENTIFIER_MARKER}{mac.lower()}",
+                    f"{self._fortigate_serial}{CLIENT_IDENTIFIER_MARKER}"
+                    f"{normalized_mac}",
                 ),
                 self._entry.entry_id,
             )
@@ -491,12 +491,14 @@ class FortiOSKDOrganizationManager:
         devices: list[dr.DeviceEntry] = []
         for client in self._coordinator.data.get("wifi_clients", {}).get("results", []):
             mac = client.get("mac")
-            if client.get("wtp_id") != ap_serial or not isinstance(mac, str):
+            normalized_mac = normalize_mac_address(mac)
+            if client.get("wtp_id") != ap_serial or normalized_mac is None:
                 continue
             device = self._device_registry.async_get_device_by_identifier(
                 (
                     DOMAIN,
-                    f"{self._fortigate_serial}{CLIENT_IDENTIFIER_MARKER}{mac.lower()}",
+                    f"{self._fortigate_serial}{CLIENT_IDENTIFIER_MARKER}"
+                    f"{normalized_mac}",
                 ),
                 self._entry.entry_id,
             )

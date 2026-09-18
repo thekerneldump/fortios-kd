@@ -1,5 +1,6 @@
 """Shared HTTP transport for the FortiOS API."""
 
+from collections.abc import Mapping
 from typing import Any
 
 from aiohttp import ClientSession, ClientTimeout
@@ -24,11 +25,17 @@ class FortiOSHttpClient:
         self._verify_ssl = verify_ssl
         self._timeout = ClientTimeout(total=request_timeout)
 
-    async def get(self, endpoint: str) -> dict[str, Any]:
+    async def get(
+        self,
+        endpoint: str,
+        *,
+        params: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
         """Return JSON from a FortiGate GET endpoint."""
         async with self._session.get(
             f"{self._base_url}/{endpoint.lstrip('/')}",
             headers=self._headers,
+            params=params,
             ssl=self._verify_ssl,
             timeout=self._timeout,
         ) as response:

@@ -37,6 +37,43 @@ DEFAULT_REQUEST_TIMEOUT = 60
 CONF_INCLUDE_UNASSIGNED_SSIDS = "include_unassigned_ssids"
 DEFAULT_INCLUDE_UNASSIGNED_SSIDS = False
 
+CONF_SYNC_ARP_TABLE = "sync_arp_table"
+DEFAULT_SYNC_ARP_TABLE = False
+CONF_MATCH_ARP_WIFI_CLIENTS = "match_arp_wifi_clients"
+DEFAULT_MATCH_ARP_WIFI_CLIENTS = True
+
+RADIO_SPECTRUM_BANDS = {
+    "24ghz": "2.4 GHz",
+    "5ghz": "5 GHz",
+    "6ghz": "6 GHz",
+}
+
+# Used when a FortiGate cannot provide monitor/wifi/meta. The runtime mapping
+# returned by the FortiGate is authoritative and overrides these values.
+RADIO_TYPE_BANDS = {
+    "802.11b": "2.4 GHz",
+    "802.11g": "2.4 GHz",
+    "802.11g-only": "2.4 GHz",
+    "802.11n": "2.4 GHz",
+    "802.11n,g-only": "2.4 GHz",
+    "802.11n-only": "2.4 GHz",
+    "802.11ax": "2.4 GHz",
+    "802.11ax,n-only": "2.4 GHz",
+    "802.11ax,n,g-only": "2.4 GHz",
+    "802.11ax-only": "2.4 GHz",
+    "802.11a": "5 GHz",
+    "802.11n-5G": "5 GHz",
+    "802.11n-5G-only": "5 GHz",
+    "802.11ac": "5 GHz",
+    "802.11ac-2G": "2.4 GHz",
+    "802.11ac,n-only": "5 GHz",
+    "802.11ac-only": "5 GHz",
+    "802.11ax-5G": "5 GHz",
+    "802.11ax,ac,n-only": "5 GHz",
+    "802.11ax,ac-only": "5 GHz",
+    "802.11ax-5G-only": "5 GHz",
+}
+
 CONF_MASK_SERIAL_NUMBERS = "mask_serial_numbers"
 DEFAULT_MASK_SERIAL_NUMBERS = True
 CONF_MASK_SSIDS = "mask_ssids"

@@ -1,6 +1,7 @@
 """Sensor platform for FortiOS KD."""
 
 from collections.abc import Iterable
+from hashlib import sha256
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -20,6 +21,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -40,7 +42,7 @@ from .const import (
     DEFAULT_MASK_VLAN_IDS,
     DOMAIN,
 )
-from .coordinator import FortiOSKDCoordinator
+from .coordinator import FortiOSKDCoordinator, normalize_mac_address
 
 
 def mask_serial(serial: str) -> str:
@@ -85,15 +87,25 @@ def mask_vlan_id(vlan_id: str | int) -> str:
     return "*" * len(str(vlan_id))
 
 
-RADIO_TYPE_BANDS = {
-    "802.11n": "2.4 GHz",
-    "802.11n,g-only": "2.4 GHz",
-    "802.11ax,n,g-only": "2.4 GHz",
-    "802.11ac": "5 GHz",
-    "802.11ac,n-only": "5 GHz",
-    "802.11ac-only": "5 GHz",
-    "802.11ax-5G-only": "5 GHz",
-}
+def _freeze_state_value(value: Any) -> Any:
+    """Return an immutable snapshot suitable for coordinator state comparisons."""
+    if isinstance(value, dict):
+        return tuple(
+            (key, _freeze_state_value(item))
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_state_value(item) for item in value)
+    if isinstance(value, set):
+        return tuple(sorted((_freeze_state_value(item) for item in value), key=repr))
+    return value
+
+
+def _dashboard_match_id(fortigate_serial: str, mac: str) -> str:
+    """Return an opaque exact-match identifier for related dashboard entities."""
+    normalized_mac = normalize_mac_address(mac) or mac.casefold()
+    identity = f"{DOMAIN}\0{fortigate_serial}\0{normalized_mac}"
+    return sha256(identity.encode()).hexdigest()
 
 
 def _registered_wifi_client_macs(
@@ -116,8 +128,34 @@ def _registered_wifi_client_macs(
             continue
 
         mac = unique_id[len(unique_id_prefix) : -len(unique_id_suffix)]
-        if mac:
-            macs.add(mac.lower())
+        if normalized_mac := normalize_mac_address(mac):
+            macs.add(normalized_mac)
+
+    return macs
+
+
+def _registered_arp_macs(
+    entries: Iterable[er.RegistryEntry],
+    fortigate_serial: str,
+) -> set[str]:
+    """Return MACs represented by registered ARP address sensors."""
+    unique_id_prefix = f"{fortigate_serial}_arp_"
+    unique_id_suffix = "_ip_addresses"
+    macs: set[str] = set()
+
+    for registry_entry in entries:
+        unique_id = registry_entry.unique_id
+        if (
+            registry_entry.domain != "sensor"
+            or registry_entry.platform != DOMAIN
+            or not unique_id.startswith(unique_id_prefix)
+            or not unique_id.endswith(unique_id_suffix)
+        ):
+            continue
+
+        mac = unique_id[len(unique_id_prefix) : -len(unique_id_suffix)]
+        if normalized_mac := normalize_mac_address(mac):
+            macs.add(normalized_mac)
 
     return macs
 
@@ -166,16 +204,21 @@ async def async_setup_entry(
     }
 
     coordinator: FortiOSKDCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    radio_type_bands = coordinator.radio_type_bands
     aps = coordinator.data["results"]
     wifi_clients = coordinator.data["wifi_clients"]["results"]
     current_client_macs = {
-        client["mac"].lower()
+        normalized_mac
         for client in wifi_clients
-        if isinstance(client.get("mac"), str) and client["mac"]
+        if (normalized_mac := normalize_mac_address(client.get("mac")))
     }
     entity_registry = er.async_get(hass)
+    registry_entries = er.async_entries_for_config_entry(
+        entity_registry,
+        entry.entry_id,
+    )
     registered_client_macs = _registered_wifi_client_macs(
-        er.async_entries_for_config_entry(entity_registry, entry.entry_id),
+        registry_entries,
         fortigate_serial,
     )
     known_client_macs = current_client_macs | registered_client_macs
@@ -183,6 +226,17 @@ async def async_setup_entry(
         *wifi_clients,
         *({"mac": mac} for mac in sorted(registered_client_macs - current_client_macs)),
     ]
+    current_arp_macs = coordinator.arp_macs if coordinator.sync_arp_table else set()
+    registered_arp_macs = (
+        _registered_arp_macs(
+            registry_entries,
+            fortigate_serial,
+        )
+        if coordinator.sync_arp_table
+        else set()
+    )
+    known_arp_macs = current_arp_macs | registered_arp_macs
+    arp_records = sorted(known_arp_macs)
 
     async_add_entities(
         [
@@ -197,6 +251,18 @@ async def async_setup_entry(
                     fortigate_serial,
                     displayed_fortigate_hostname,
                     client_masking,
+                )
+            ),
+            *(
+                entity
+                for mac in arp_records
+                for entity in create_arp_entities(
+                    coordinator,
+                    mac,
+                    fortigate_serial,
+                    displayed_fortigate_hostname,
+                    mask_client_macs,
+                    mask_client_hostnames,
                 )
             ),
             *(
@@ -285,7 +351,12 @@ async def async_setup_entry(
             *(FortiGateAPJoinTime(ap) for ap in aps),
             *(FortiGateAPUpTime(ap) for ap in aps),
             *(
-                FortiGateAPRadioSSIDs(ap, radio, mask_ssids)
+                FortiGateAPRadioSSIDs(
+                    ap,
+                    radio,
+                    mask_ssids,
+                    radio_type_bands,
+                )
                 for ap in aps
                 for radio in ap.get("radio", [])
             ),
@@ -300,7 +371,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -314,7 +385,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -331,7 +402,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -348,7 +419,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -365,7 +436,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -382,7 +453,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -397,7 +468,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -412,7 +483,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -427,7 +498,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -442,7 +513,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -457,7 +528,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -473,7 +544,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -486,7 +557,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -499,7 +570,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -516,7 +587,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
             *(
                 FortiGateAPRadioMetric(
@@ -533,7 +604,7 @@ async def async_setup_entry(
                 )
                 for ap in aps
                 for radio in ap.get("radio", [])
-                if radio.get("radio_type") in RADIO_TYPE_BANDS
+                if radio.get("radio_type") in radio_type_bands
             ),
         ]
     )
@@ -547,7 +618,9 @@ async def async_setup_entry(
             if not isinstance(mac, str) or not mac:
                 continue
 
-            normalized_mac = mac.lower()
+            normalized_mac = normalize_mac_address(mac)
+            if normalized_mac is None:
+                continue
             if normalized_mac in known_client_macs:
                 continue
 
@@ -566,6 +639,31 @@ async def async_setup_entry(
             async_add_entities(new_entities)
 
     entry.async_on_unload(coordinator.async_add_listener(_add_new_wifi_clients))
+
+    def _add_new_arp_entries() -> None:
+        new_entities: list[SensorEntity] = []
+
+        for normalized_mac in coordinator.arp_macs:
+            if normalized_mac in known_arp_macs:
+                continue
+
+            known_arp_macs.add(normalized_mac)
+            new_entities.extend(
+                create_arp_entities(
+                    coordinator,
+                    normalized_mac,
+                    fortigate_serial,
+                    displayed_fortigate_hostname,
+                    mask_client_macs,
+                    mask_client_hostnames,
+                )
+            )
+
+        if new_entities:
+            async_add_entities(new_entities)
+
+    if coordinator.sync_arp_table:
+        entry.async_on_unload(coordinator.async_add_listener(_add_new_arp_entries))
 
     device_registry = dr.async_get(hass)
 
@@ -640,6 +738,7 @@ class FortiGateAPSerialSensor(SensorEntity):
             identifiers={(DOMAIN, serial)},
             name=mask_name(ap["name"]) if mask_ap_names else ap["name"],
             manufacturer="Fortinet",
+            model=ap.get("fortios_kd_ap_model"),
             serial_number=displayed_serial,
         )
 
@@ -776,7 +875,38 @@ class FortiGateAPOSVersion(SensorEntity):
         )
 
 
-class FortiGateAPClients(CoordinatorEntity[FortiOSKDCoordinator], SensorEntity):
+class FortiGateChangedCoordinatorSensor(
+    CoordinatorEntity[FortiOSKDCoordinator], SensorEntity
+):
+    """Write state only when this entity's state or attributes changed."""
+
+    _last_coordinator_state: tuple[bool, Any, Any] | None = None
+
+    def _coordinator_state(self) -> tuple[bool, Any, Any]:
+        """Return an immutable snapshot of externally visible entity state."""
+        return (
+            self.available,
+            _freeze_state_value(self.native_value),
+            _freeze_state_value(self.extra_state_attributes),
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to updates and remember the initial entity state."""
+        await super().async_added_to_hass()
+        self._last_coordinator_state = self._coordinator_state()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Write state only when the coordinator changed this entity."""
+        current_state = self._coordinator_state()
+        if current_state == self._last_coordinator_state:
+            return
+
+        self._last_coordinator_state = current_state
+        self.async_write_ha_state()
+
+
+class FortiGateAPClients(FortiGateChangedCoordinatorSensor):
     _attr_has_entity_name = True
     _attr_icon = "mdi:account-multiple"
     _attr_name = "Clients"
@@ -883,11 +1013,12 @@ class FortiGateAPRadioSSIDs(SensorEntity):
         ap: dict[str, Any],
         radio: dict[str, Any],
         mask_ssids: bool,
+        radio_type_bands: dict[str, str],
     ) -> None:
         serial = ap["serial"]
         radio_id = radio["radio_id"]
         self._radio_object_id = f"Radio {radio_id} SSIDs"
-        band = RADIO_TYPE_BANDS.get(
+        band = radio_type_bands.get(
             radio.get("radio_type"),
             f"Radio {radio_id}",
         )
@@ -915,10 +1046,7 @@ class FortiGateAPRadioSSIDs(SensorEntity):
         return self._radio_object_id
 
 
-class FortiGateAPRadioMetric(
-    CoordinatorEntity[FortiOSKDCoordinator],
-    SensorEntity,
-):
+class FortiGateAPRadioMetric(FortiGateChangedCoordinatorSensor):
     _attr_has_entity_name = True
 
     def __init__(
@@ -939,8 +1067,10 @@ class FortiGateAPRadioMetric(
         self._serial = ap["serial"]
         self._radio_id = radio["radio_id"]
         self._field = field
+        self._ap_model = ap.get("fortios_kd_ap_model")
+        self._platform_type = ap.get("fortios_kd_platform_type")
         self._radio_object_id = f"Radio {self._radio_id} {label}"
-        self._band = RADIO_TYPE_BANDS.get(
+        self._band = coordinator.radio_type_bands.get(
             radio.get("radio_type"),
             f"Radio {self._radio_id}",
         )
@@ -961,6 +1091,34 @@ class FortiGateAPRadioMetric(
             "fortios_kd_radio_id": self._radio_id,
             "fortios_kd_band": self._band,
         }
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return graph metadata and live channel capability details."""
+        attributes = dict(self._attr_extra_state_attributes)
+        if self._field != "oper_chan" or not isinstance(self._platform_type, str):
+            return attributes
+
+        attributes["fortios_kd_platform_type"] = self._platform_type
+        if isinstance(self._ap_model, str):
+            attributes["fortios_kd_ap_model"] = self._ap_model
+
+        radio = self._get_radio()
+        if radio is None:
+            return attributes
+
+        radio_type = radio.get("radio_type")
+        if not isinstance(radio_type, str):
+            return attributes
+
+        attributes.update(
+            self.coordinator.get_radio_channel_metadata(
+                self._platform_type,
+                radio_type,
+                radio.get("oper_chan"),
+            )
+        )
+        return attributes
 
     @property
     def suggested_object_id(self) -> str:
@@ -994,10 +1152,7 @@ class FortiGateAPRadioMetric(
         return None
 
 
-class FortiGateAPMetric(
-    CoordinatorEntity[FortiOSKDCoordinator],
-    SensorEntity,
-):
+class FortiGateAPMetric(FortiGateChangedCoordinatorSensor):
     """Represent a numeric AP-level metric."""
 
     _attr_has_entity_name = True
@@ -1058,31 +1213,194 @@ class FortiGateAPMetric(
         return None
 
 
-class FortiGateWiFiClientCoordinatorEntity(
-    CoordinatorEntity[FortiOSKDCoordinator], SensorEntity
-):
-    """Write client state only when its value or availability changes."""
+class FortiGateARPMetric(FortiGateChangedCoordinatorSensor):
+    """Represent one field from an ARP-table device."""
 
-    _last_coordinator_state: tuple[bool, Any] | None = None
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
-    def _coordinator_state(self) -> tuple[bool, Any]:
-        """Return the state fields that can change during a refresh."""
-        return (self.available, self.native_value)
+    def __init__(
+        self,
+        coordinator: FortiOSKDCoordinator,
+        mac: str,
+        fortigate_serial: str,
+        fortigate_hostname: str,
+        field: str,
+        label: str,
+        icon: str,
+        *,
+        mask_mac: bool,
+        mask_hostname: bool,
+        unit: str | None = None,
+    ) -> None:
+        """Initialize an ARP-table entity."""
+        super().__init__(coordinator)
 
-    async def async_added_to_hass(self) -> None:
-        """Subscribe to updates and remember the initial entity state."""
-        await super().async_added_to_hass()
-        self._last_coordinator_state = self._coordinator_state()
+        self._mac = mac
+        self._field = field
+        self._mask_mac = mask_mac
+        self._mask_hostname = mask_hostname
+        arp_identifier = f"{fortigate_serial}_arp_{mac}"
+        displayed_mac = mask_client_mac(mac) if mask_mac else mac
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Write state only when the coordinator changed this entity."""
-        current_state = self._coordinator_state()
-        if current_state == self._last_coordinator_state:
-            return
+        self._attr_unique_id = f"{fortigate_serial}_arp_{mac}_{field}"
+        self._attr_name = label
+        self._attr_icon = icon
+        self._attr_native_unit_of_measurement = unit
+        self._attr_extra_state_attributes = {
+            "fortios_kd_entry_type": "arp_entry",
+            "fortios_kd_arp_field": field,
+            "fortios_kd_match_id": _dashboard_match_id(fortigate_serial, mac),
+        }
+        device_info = DeviceInfo(
+            identifiers={(DOMAIN, arp_identifier)},
+            name=f"ARP Device {displayed_mac} ({fortigate_hostname})",
+            via_device=(DOMAIN, fortigate_serial),
+        )
+        self._attr_device_info = device_info
 
-        self._last_coordinator_state = current_state
-        self.async_write_ha_state()
+    def _entries(self) -> list[dict[str, Any]]:
+        """Return the current ARP bindings for this device."""
+        return self.coordinator.get_arp_entries(self._mac)
+
+    def _ip_conflicts(self) -> list[dict[str, Any]]:
+        """Return different MACs currently claiming this device's IPs."""
+        conflicts: dict[tuple[str, str], dict[str, Any]] = {}
+
+        for entry in self._entries():
+            ip_address = entry.get("ip")
+            if not isinstance(ip_address, str) or not ip_address:
+                continue
+
+            claimants: list[tuple[str, dict[str, Any]]] = []
+            if self.coordinator.match_arp_wifi_clients:
+                claimants.extend(
+                    ("wifi_client", claimant)
+                    for claimant in self.coordinator.get_wifi_clients_by_ip(ip_address)
+                )
+            claimants.extend(
+                ("arp", claimant)
+                for claimant in self.coordinator.get_arp_entries_by_ip(ip_address)
+            )
+
+            for source, claimant in claimants:
+                claimant_mac = normalize_mac_address(claimant.get("mac"))
+                if claimant_mac is None or claimant_mac == self._mac:
+                    continue
+
+                key = (ip_address, claimant_mac)
+                conflict = conflicts.setdefault(
+                    key,
+                    {
+                        "ip_address": ip_address,
+                        "mac_address": (
+                            mask_client_mac(claimant_mac)
+                            if self._mask_mac
+                            else claimant_mac
+                        ),
+                        "sources": [],
+                    },
+                )
+                if source not in conflict["sources"]:
+                    conflict["sources"].append(source)
+
+                hostname = claimant.get("hostname")
+                if isinstance(hostname, str) and hostname:
+                    conflict["hostname"] = (
+                        mask_client_hostname(hostname)
+                        if self._mask_hostname
+                        else hostname
+                    )
+
+        return list(conflicts.values())
+
+    @property
+    def available(self) -> bool:
+        """Return whether this MAC is currently in the ARP table."""
+        return super().available and bool(self._entries())
+
+    @property
+    def native_value(self) -> str | int | float | None:
+        """Return the selected ARP field, aggregating duplicate MAC rows."""
+        entries = self._entries()
+        if not entries:
+            return None
+
+        if self._field == "mac_address":
+            return mask_client_mac(self._mac) if self._mask_mac else self._mac
+
+        if self._field == "wifi_client_match":
+            client = self.coordinator.get_wifi_client(self._mac)
+            if client is None:
+                return "Not currently detected"
+
+            hostname = client.get("hostname")
+            if isinstance(hostname, str) and hostname:
+                return (
+                    mask_client_hostname(hostname) if self._mask_hostname else hostname
+                )
+            return "Connected"
+
+        if self._field == "ip_conflict":
+            return "Possible conflict" if self._ip_conflicts() else "Clear"
+
+        if self._field == "ip_addresses":
+            values = {
+                value
+                for entry in entries
+                if isinstance((value := entry.get("ip")), str) and value
+            }
+            return ", ".join(sorted(values)) or None
+
+        if self._field == "interfaces":
+            values = {
+                value
+                for entry in entries
+                if isinstance((value := entry.get("interface")), str) and value
+            }
+            return ", ".join(sorted(values)) or None
+
+        if self._field == "vdoms":
+            values = {
+                value
+                for entry in entries
+                if isinstance((value := entry.get("vdom")), str) and value
+            }
+            return ", ".join(sorted(values)) or None
+
+        if self._field == "age":
+            ages: list[float] = []
+            for entry in entries:
+                try:
+                    ages.append(float(entry["age"]))
+                except KeyError, TypeError, ValueError:
+                    continue
+            if not ages:
+                return None
+            age = min(ages)
+            return int(age) if age.is_integer() else age
+
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return claimant details for possible IP conflicts."""
+        attributes = dict(self._attr_extra_state_attributes)
+        if self._field != "ip_conflict":
+            return attributes
+
+        conflicts = self._ip_conflicts()
+        attributes.update(
+            {
+                "conflict_count": len(conflicts),
+                "conflicting_claimants": conflicts,
+            }
+        )
+        return attributes
+
+
+class FortiGateWiFiClientCoordinatorEntity(FortiGateChangedCoordinatorSensor):
+    """Represent a Wi-Fi client that suppresses unchanged state writes."""
 
 
 class FortiGateWiFiClientMAC(FortiGateWiFiClientCoordinatorEntity):
@@ -1108,6 +1426,13 @@ class FortiGateWiFiClientMAC(FortiGateWiFiClientCoordinatorEntity):
 
         self._attr_unique_id = f"{client_identifier}_mac_address"
         self._attr_native_value = displayed_mac
+        self._attr_extra_state_attributes = {
+            "fortios_kd_entry_type": "wifi_client",
+            "fortios_kd_match_id": _dashboard_match_id(
+                fortigate_serial,
+                self._mac,
+            ),
+        }
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, client_identifier)},
             name=f"Wifi Client {displayed_mac} ({fortigate_hostname})",
@@ -1221,6 +1546,57 @@ class FortiGateWiFiClientMetric(FortiGateWiFiClientCoordinatorEntity):
         return super().available and self._get_client() is not None
 
 
+class FortiGateWiFiClientIPAddress(FortiGateWiFiClientMetric):
+    """Represent a wifi client's current or ARP-derived IP address."""
+
+    def __init__(
+        self,
+        coordinator: FortiOSKDCoordinator,
+        client: dict[str, Any],
+        fortigate_serial: str,
+    ) -> None:
+        """Initialize the wifi-client IP address entity."""
+        super().__init__(
+            coordinator,
+            client,
+            fortigate_serial,
+            "ip",
+            "IP Address",
+            "mdi:ip",
+        )
+
+    def _arp_ip_addresses(self) -> list[str]:
+        """Return current ARP addresses for this client's MAC."""
+        if not self.coordinator.match_arp_wifi_clients:
+            return []
+        return sorted(
+            {
+                ip_address
+                for entry in self.coordinator.get_arp_entries(self._mac)
+                if isinstance((ip_address := entry.get("ip")), str) and ip_address
+            }
+        )
+
+    @property
+    def native_value(self) -> str | None:
+        """Prefer the wifi-client IP and fall back to current ARP bindings."""
+        client = self._get_client()
+        if client is not None:
+            ip_address = client.get("ip")
+            if isinstance(ip_address, str) and ip_address:
+                return ip_address
+
+        arp_ip_addresses = self._arp_ip_addresses()
+        return ", ".join(arp_ip_addresses) or None
+
+    @property
+    def available(self) -> bool:
+        """Remain available while either endpoint knows about this client."""
+        return self.coordinator.last_update_success and (
+            self._get_client() is not None or bool(self._arp_ip_addresses())
+        )
+
+
 class FortiGateWiFiClientLastKnownHostname(
     FortiGateWiFiClientCoordinatorEntity, RestoreEntity
 ):
@@ -1325,6 +1701,85 @@ class FortiGateWiFiClientSource(FortiGateWiFiClientMetric):
         return self._fortigate_hostname
 
 
+def create_arp_entities(
+    coordinator: FortiOSKDCoordinator,
+    mac: str,
+    fortigate_serial: str,
+    fortigate_hostname: str,
+    mask_mac: bool,
+    mask_hostname: bool = False,
+) -> list[SensorEntity]:
+    """Create the diagnostic entities belonging to one ARP-table device."""
+    common = (
+        coordinator,
+        mac,
+        fortigate_serial,
+        fortigate_hostname,
+    )
+    options = {
+        "mask_mac": mask_mac,
+        "mask_hostname": mask_hostname,
+    }
+    return [
+        FortiGateARPMetric(
+            *common,
+            "mac_address",
+            "ARP MAC Address",
+            "mdi:network-outline",
+            **options,
+        ),
+        FortiGateARPMetric(
+            *common,
+            "ip_addresses",
+            "ARP IP Addresses",
+            "mdi:ip-network",
+            **options,
+        ),
+        FortiGateARPMetric(
+            *common,
+            "interfaces",
+            "ARP Interfaces",
+            "mdi:lan-connect",
+            **options,
+        ),
+        FortiGateARPMetric(
+            *common,
+            "age",
+            "ARP Age",
+            "mdi:timer-outline",
+            unit=UnitOfTime.MINUTES,
+            **options,
+        ),
+        FortiGateARPMetric(
+            *common,
+            "vdoms",
+            "ARP VDOMs",
+            "mdi:server-network",
+            **options,
+        ),
+        *(
+            [
+                FortiGateARPMetric(
+                    *common,
+                    "wifi_client_match",
+                    "WiFi Client Match",
+                    "mdi:wifi-check",
+                    **options,
+                )
+            ]
+            if coordinator.match_arp_wifi_clients
+            else []
+        ),
+        FortiGateARPMetric(
+            *common,
+            "ip_conflict",
+            "IP Conflict",
+            "mdi:shield-alert-outline",
+            **options,
+        ),
+    ]
+
+
 def create_wifi_client_entities(
     coordinator: FortiOSKDCoordinator,
     client: dict[str, Any],
@@ -1333,6 +1788,12 @@ def create_wifi_client_entities(
     masking: dict[str, bool],
 ) -> list[SensorEntity]:
     """Create every entity belonging to one Wi-Fi client."""
+    normalized_mac = normalize_mac_address(client.get("mac"))
+    if normalized_mac is None:
+        return []
+    if client.get("mac") != normalized_mac:
+        client = {**client, "mac": normalized_mac}
+
     return [
         FortiGateWiFiClientMAC(
             coordinator,
@@ -1358,14 +1819,7 @@ def create_wifi_client_entities(
             fortigate_serial,
             fortigate_hostname,
         ),
-        FortiGateWiFiClientMetric(
-            coordinator,
-            client,
-            fortigate_serial,
-            "ip",
-            "IP Address",
-            "mdi:ip",
-        ),
+        FortiGateWiFiClientIPAddress(coordinator, client, fortigate_serial),
         FortiGateWiFiClientMetric(
             coordinator,
             client,

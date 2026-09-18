@@ -61,6 +61,7 @@ function clientModel(hass) {
   const macStates = Object.values(hass.states)
     .filter(
       (state) =>
+        state.attributes.fortios_kd_entry_type === "wifi_client" &&
         state.entity_id.startsWith("sensor.wifi_client_") &&
         state.entity_id.endsWith("_mac_address"),
     )

@@ -56,6 +56,49 @@ const GRAPH_GROUPS = {
   overview: OVERVIEW_GRAPHS,
 };
 const BANDS = ["2.4 GHz", "5 GHz"];
+const STRATEGY_ELEMENT = "ll-strategy-dashboard-fortios-kd-wifi-graphs";
+
+class FortiOSKDWifiGraphsDashboardStrategy extends HTMLElement {
+  static getCreateSuggestions(_hass) {
+    return {
+      title: "KD Wifi Graphs",
+      icon: "mdi:chart-line",
+    };
+  }
+
+  static async generate(config, _hass) {
+    return {
+      title: config.title || "KD Wifi Graphs",
+      views: [dashboardView("Wifi Overview", "wifi-overview", "overview")],
+    };
+  }
+}
+
+if (!customElements.get(STRATEGY_ELEMENT)) {
+  customElements.define(
+    STRATEGY_ELEMENT,
+    FortiOSKDWifiGraphsDashboardStrategy,
+  );
+}
+
+window.customStrategies = window.customStrategies || [];
+
+if (
+  !window.customStrategies.some(
+    (strategy) => strategy.type === "fortios-kd-wifi-graphs",
+  )
+) {
+  window.customStrategies.push({
+    type: "fortios-kd-wifi-graphs",
+    strategyType: "dashboard",
+    name: "FortiOS KD Wifi Graphs",
+    description:
+      "Explore automatically discovered FortiGate radio history with hub, AP, and SSID filters.",
+    documentationURL:
+      "https://github.com/thekerneldump/fortios-kd#community-dashboards",
+  });
+}
+
 const LEGEND_LAYOUT_STYLE = `
   .chart-legend {
     padding-inline: 8px;
@@ -85,8 +128,12 @@ const LEGEND_LAYOUT_STYLE = `
     display: none;
   }
 `;
-const LEGEND_STYLE_SHEET = new CSSStyleSheet();
-LEGEND_STYLE_SHEET.replaceSync(LEGEND_LAYOUT_STYLE);
+const LEGEND_STYLE_SHEET =
+  typeof CSSStyleSheet !== "undefined" &&
+  typeof CSSStyleSheet.prototype.replaceSync === "function"
+    ? new CSSStyleSheet()
+    : undefined;
+LEGEND_STYLE_SHEET?.replaceSync(LEGEND_LAYOUT_STYLE);
 const FILTER_DEFAULTS = new Set([
   "All",
   "unknown",
@@ -254,11 +301,23 @@ function applyHistoryGraphLegendLayout(card) {
       continue;
     }
 
-    if (!chartRoot.adoptedStyleSheets.includes(LEGEND_STYLE_SHEET)) {
+    if (
+      LEGEND_STYLE_SHEET &&
+      "adoptedStyleSheets" in chartRoot &&
+      !chartRoot.adoptedStyleSheets.includes(LEGEND_STYLE_SHEET)
+    ) {
       chartRoot.adoptedStyleSheets = [
         ...chartRoot.adoptedStyleSheets,
         LEGEND_STYLE_SHEET,
       ];
+    } else if (
+      !LEGEND_STYLE_SHEET &&
+      !chartRoot.querySelector("style[data-fortios-kd-legend]")
+    ) {
+      const style = document.createElement("style");
+      style.dataset.fortiosKdLegend = "";
+      style.textContent = LEGEND_LAYOUT_STYLE;
+      chartRoot.append(style);
     }
   }
 
@@ -489,47 +548,4 @@ function dashboardView(title, path, group) {
       },
     ],
   };
-}
-
-class FortiOSKDWifiGraphsDashboardStrategy extends HTMLElement {
-  static getCreateSuggestions(_hass) {
-    return {
-      title: "KD Wifi Graphs",
-      icon: "mdi:chart-line",
-    };
-  }
-
-  static async generate(config, _hass) {
-    return {
-      title: config.title || "KD Wifi Graphs",
-      views: [dashboardView("Wifi Overview", "wifi-overview", "overview")],
-    };
-  }
-}
-
-const STRATEGY_ELEMENT = "ll-strategy-dashboard-fortios-kd-wifi-graphs";
-
-if (!customElements.get(STRATEGY_ELEMENT)) {
-  customElements.define(
-    STRATEGY_ELEMENT,
-    FortiOSKDWifiGraphsDashboardStrategy,
-  );
-}
-
-window.customStrategies = window.customStrategies || [];
-
-if (
-  !window.customStrategies.some(
-    (strategy) => strategy.type === "fortios-kd-wifi-graphs",
-  )
-) {
-  window.customStrategies.push({
-    type: "fortios-kd-wifi-graphs",
-    strategyType: "dashboard",
-    name: "FortiOS KD Wifi Graphs",
-    description:
-      "Explore automatically discovered FortiGate radio history with hub, AP, and SSID filters.",
-    documentationURL:
-      "https://github.com/thekerneldump/fortios-kd#community-dashboards",
-  });
 }

@@ -28,6 +28,7 @@ async def test_dashboard_strategy_asset(hass: HomeAssistant) -> None:
     assert "registryEntry(hass.devices, entity?.device_id)" in source
     assert "clientDevice?.via_device_id" in source
     assert 'selectedSsid === "Unavailable Clients"' in source
+    assert 'state.attributes.fortios_kd_entry_type === "wifi_client"' in source
     assert "type: `custom:${CLIENT_CARD_ELEMENT}`" in source
     assert "custom:auto-entities" not in source
     assert "custom:layout-card" not in source
@@ -91,18 +92,76 @@ async def test_wifi_graph_dashboard_strategy_asset(hass: HomeAssistant) -> None:
     assert "custom:auto-entities" not in source
 
 
+async def test_arp_dashboard_strategy_asset(hass: HomeAssistant) -> None:
+    """Test that the ARP dashboard discovers only current ARP entries."""
+    integration = await async_get_integration(hass, DOMAIN)
+    await integration.async_get_component()
+
+    from custom_components.fortios_kd.frontend import FRONTEND_ASSETS  # noqa: PLC0415
+
+    arp_path = FRONTEND_ASSETS["/fortios_kd/fortios-kd-arp-dashboard.js"]
+    source = arp_path.read_text()
+
+    assert 'type: "fortios-kd-arp-entries"' in source
+    assert 'title: "KD ARP Entries"' in source
+    assert 'state.attributes.fortios_kd_entry_type !== "arp_entry"' in source
+    assert "fortios_kd_arp_field" in source
+    assert 'entry.fields.get("mac_address")' in source
+    assert 'entry.fields.get("interfaces")' in source
+    assert "`${ipAddress} - ${interfaceName}`" in source
+    assert "if (!isCurrent(macState))" in source
+    assert 'action_name: "Open ARP device"' in source
+    assert 'action_name: "Open FortiGate"' in source
+    assert '["wifi_client_match", "WiFi client match"]' in source
+    assert '["ip_conflict", "IP conflict"]' in source
+    assert "class FortiOSKDARPEntryGrid extends HTMLElement" in source
+    assert "type: `custom:${ARP_CARD_ELEMENT}`" in source
+
+
+async def test_arp_table_dashboard_strategy_asset(hass: HomeAssistant) -> None:
+    """Test that the compact ARP table links exact matched devices."""
+    integration = await async_get_integration(hass, DOMAIN)
+    await integration.async_get_component()
+
+    from custom_components.fortios_kd.frontend import FRONTEND_ASSETS  # noqa: PLC0415
+
+    table_path = FRONTEND_ASSETS["/fortios_kd/fortios-kd-arp-table-dashboard.js"]
+    source = table_path.read_text()
+
+    assert 'type: "fortios-kd-arp-table"' in source
+    assert 'title: "KD ARP Table"' in source
+    assert "wifiDevicesByMatchId" in source
+    assert "state.attributes.fortios_kd_match_id" in source
+    assert "wifiDevicesByMatchId.get(entry.matchId)" in source
+    assert 'matchState.state !== "Not currently detected"' in source
+    assert 'iconLink(row.deviceId, "mdi:open-in-new", "Open ARP device")' in source
+    assert 'iconLink(row.wifiDeviceId, "mdi:wifi", "Open WiFi client")' in source
+    assert '"Device"' in source
+    assert '"IP address"' in source
+    assert '"Interface"' in source
+    assert '"MAC address"' in source
+    assert "class FortiOSKDARPTable extends HTMLElement" in source
+    assert "type: `custom:${ARP_TABLE_CARD_ELEMENT}`" in source
+
+
 async def test_all_frontend_assets_are_loaded(hass: HomeAssistant) -> None:
-    """Test that Home Assistant loads both dashboard strategy modules."""
+    """Test that one loader imports every dashboard strategy module."""
     integration = await async_get_integration(hass, DOMAIN)
     await integration.async_get_component()
 
     from custom_components.fortios_kd.frontend import (  # noqa: PLC0415
         FRONTEND_ASSETS,
+        FRONTEND_LOADER_PATH,
+        FRONTEND_LOADER_URL,
         FRONTEND_MODULE_URLS,
     )
 
-    assert len(FRONTEND_MODULE_URLS) == len(FRONTEND_ASSETS) == 2
-    for url in FRONTEND_ASSETS:
-        assert any(
-            module_url.startswith(f"{url}?v=") for module_url in FRONTEND_MODULE_URLS
-        )
+    assert len(FRONTEND_ASSETS) == 5
+    assert len(FRONTEND_MODULE_URLS) == 1
+    assert FRONTEND_MODULE_URLS[0].startswith(f"{FRONTEND_LOADER_URL}?v=")
+
+    loader_source = FRONTEND_LOADER_PATH.read_text()
+    assert 'import "./fortios-kd-dashboard.js";' in loader_source
+    assert 'import "./fortios-kd-wifi-graphs-dashboard.js";' in loader_source
+    assert 'import "./fortios-kd-arp-dashboard.js";' in loader_source
+    assert 'import "./fortios-kd-arp-table-dashboard.js";' in loader_source
