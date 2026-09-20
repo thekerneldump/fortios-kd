@@ -10,6 +10,7 @@ class FortiOSApiContext:
     """Store information shared by all API modules."""
 
     version: FortiOSVersion | None = None
+    version_text: str | None = None
 
     def matches_version(self, family: str) -> bool:
         """Return whether the detected version belongs to a version family."""

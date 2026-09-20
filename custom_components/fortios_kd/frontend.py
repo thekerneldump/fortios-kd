@@ -20,6 +20,10 @@ FRONTEND_ARP_TABLE_PATH = (
 )
 FRONTEND_DHCP_URL = "/fortios_kd/fortios-kd-dhcp-dashboard.js"
 FRONTEND_DHCP_PATH = Path(__file__).parent / "frontend" / "fortios-kd-dhcp-dashboard.js"
+FRONTEND_VDOM_RESOURCES_URL = "/fortios_kd/fortios-kd-vdom-resources-dashboard.js"
+FRONTEND_VDOM_RESOURCES_PATH = (
+    Path(__file__).parent / "frontend" / "fortios-kd-vdom-resources-dashboard.js"
+)
 FRONTEND_LOADER_URL = "/fortios_kd/fortios-kd-dashboard-loader.js"
 FRONTEND_LOADER_PATH = (
     Path(__file__).parent / "frontend" / "fortios-kd-dashboard-loader.js"
@@ -30,6 +34,7 @@ FRONTEND_ASSETS = {
     FRONTEND_ARP_URL: FRONTEND_ARP_PATH,
     FRONTEND_ARP_TABLE_URL: FRONTEND_ARP_TABLE_PATH,
     FRONTEND_DHCP_URL: FRONTEND_DHCP_PATH,
+    FRONTEND_VDOM_RESOURCES_URL: FRONTEND_VDOM_RESOURCES_PATH,
     FRONTEND_LOADER_URL: FRONTEND_LOADER_PATH,
 }
 FRONTEND_VERSION = max(path.stat().st_mtime_ns for path in FRONTEND_ASSETS.values())

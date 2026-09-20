@@ -1,6 +1,8 @@
 """Tests for the FortiOS-KD config flow."""
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from homeassistant import config_entries
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_PORT, CONF_VERIFY_SSL
@@ -228,6 +230,69 @@ async def test_reconfigure_invalid_auth(
     assert result["step_id"] == "reconfigure"
     assert result["errors"] == {"base": "invalid_auth"}
     assert entry.data[CONF_API_KEY] == "old-api-key"
+
+
+@pytest.mark.parametrize(
+    "ignore_missing_translations",
+    ["component.homeassistant.config.abort.reconfigure_successful"],
+)
+async def test_reconfigure_on_newer_firmware_retains_snmp_fallback(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    ignore_missing_translations: str,
+) -> None:
+    """Test 6.2 SNMP settings remain dormant after an upgrade to 6.4."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="fgt.example.local",
+        title="fgt.example.local:8443",
+        data={
+            CONF_HOST: "fgt.example.local",
+            CONF_API_KEY: "test-api-key",
+            CONF_PORT: 8443,
+            CONF_VERIFY_SSL: True,
+            CONF_REQUEST_TIMEOUT: 60,
+            CONF_SYNC_ARP_TABLE: True,
+            CONF_SNMP_COMMUNITY: "stored-readonly-community",
+            CONF_SNMP_PORT: 161,
+            CONF_ORGANIZATION_MODE: "none",
+        },
+    )
+    entry.add_to_hass(hass)
+    aioclient_mock.get(
+        f"{BASE_URL}/monitor/system/status",
+        json={"version": "v6.4.16", "build": 2098},
+    )
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={
+            "source": config_entries.SOURCE_RECONFIGURE,
+            "entry_id": entry.entry_id,
+        },
+    )
+    with patch.object(
+        hass.config_entries,
+        "async_reload",
+        new=AsyncMock(return_value=True),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_HOST: "fgt.example.local",
+                CONF_API_KEY: "test-api-key",
+                CONF_PORT: 8443,
+                CONF_VERIFY_SSL: True,
+                CONF_REQUEST_TIMEOUT: 60,
+                CONF_SYNC_ARP_TABLE: True,
+                CONF_ORGANIZATION_MODE: "none",
+            },
+        )
+
+    assert ignore_missing_translations
+    assert result["type"] is FlowResultType.ABORT
+    assert entry.data[CONF_SNMP_COMMUNITY] == "stored-readonly-community"
+    assert entry.data[CONF_SNMP_PORT] == 161
 
 
 async def test_area_organization_requires_area(

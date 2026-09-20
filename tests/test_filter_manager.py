@@ -51,6 +51,7 @@ def _mock_coordinator(access_point: str, ssid: str) -> Mock:
         }
     ]
     coordinator.dhcp_macs = {"aa:bb:cc:dd:ee:ff"}
+    coordinator.vdom_names = {"root"}
     return coordinator
 
 
@@ -285,6 +286,7 @@ async def test_unassigned_ssid_option_and_profile_modes(hass: Any) -> None:
         "wifi_clients": {"results": [{"ssid": "Client-only Wifi"}]},
     }
     coordinator.async_add_listener.return_value = Mock()
+    coordinator.vdom_names = set()
 
     manager = FortiOSKDFilterManager(hass)
     _register_hub(manager, "entry-a", "AlphaGate", coordinator)
@@ -348,6 +350,7 @@ async def test_fortios_62_automatic_tunnel_assignment(hass: Any) -> None:
         "wifi_clients": {"results": []},
     }
     coordinator.async_add_listener.return_value = Mock()
+    coordinator.vdom_names = set()
 
     manager = FortiOSKDFilterManager(hass)
     _register_hub(manager, "entry-a", "AlphaGate", coordinator)
@@ -405,7 +408,7 @@ async def test_select_entities(hass: Any) -> None:
         labels={label.label_id},
     )
 
-    assert len(entities) == 10
+    assert len(entities) == 13
     (
         fortigate,
         access_point,
@@ -417,6 +420,9 @@ async def test_select_entities(hass: Any) -> None:
         arp_lease_type,
         dhcp_fortigate,
         dhcp_interface,
+        vdom_fortigate,
+        vdom_filter,
+        vdom_graph_layout,
     ) = entities
     assert fortigate.options == ["All", "AlphaGate", "BetaGate"]
 
@@ -447,6 +453,20 @@ async def test_select_entities(hass: Any) -> None:
     await dhcp_interface.async_select_option("lan")
     assert manager.selected_dhcp_fortigate == "AlphaGate"
     assert manager.selected_dhcp_interface == "lan"
+
+    assert vdom_fortigate.options == ["All", "AlphaGate", "BetaGate"]
+    await vdom_fortigate.async_select_option("AlphaGate")
+    assert vdom_filter.options == ["All", "root"]
+    await vdom_filter.async_select_option("root")
+    assert manager.selected_vdom_fortigate == "AlphaGate"
+    assert manager.selected_vdom == "root"
+    assert vdom_graph_layout.options == [
+        "Combined by resource",
+        "Separate by VDOM",
+    ]
+    assert vdom_graph_layout.current_option == "Combined by resource"
+    await vdom_graph_layout.async_select_option("Separate by VDOM")
+    assert manager.selected_vdom_graph_layout == "Separate by VDOM"
 
     duplicate_entities: list[Any] = []
     await async_setup_entry(
