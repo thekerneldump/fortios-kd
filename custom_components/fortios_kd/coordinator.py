@@ -1,6 +1,6 @@
 """Coordinate FortiGate API updates."""
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 import logging
 from time import monotonic
 from typing import Any
@@ -18,6 +18,9 @@ from .snmp_arp import FortiOSKDSnmpArpClient, SnmpArpError
 
 _LOGGER = logging.getLogger(__name__)
 _VDOM_REFRESH_INTERVAL_SECONDS = 300
+_DNS_CONFIGURATION_REFRESH_INTERVAL_SECONDS = 300
+
+DNSServerKey = tuple[str, str]
 
 
 def normalize_mac_address(value: Any) -> str | None:
@@ -86,6 +89,141 @@ def _vdom_resource_results(
     return results or None
 
 
+def _vdom_dns_results(
+    response: dict[str, Any] | list[Any],
+) -> dict[str, dict[str, Any]] | None:
+    """Normalize FortiOS single- and multi-VDOM DNS configuration responses."""
+    envelopes = [response] if isinstance(response, dict) else response
+    results: dict[str, dict[str, Any]] = {}
+    response_shape_valid = False
+
+    for envelope in envelopes:
+        if not isinstance(envelope, dict):
+            continue
+
+        vdom_name = envelope.get("vdom")
+        settings = envelope.get("results")
+        if not isinstance(settings, dict):
+            continue
+
+        response_shape_valid = True
+        if isinstance(vdom_name, str) and vdom_name:
+            results[vdom_name] = settings
+
+    return results if response_shape_valid else None
+
+
+def _configured_dns_servers(
+    global_response: dict[str, Any],
+    vdom_response: dict[str, Any] | list[Any] | None,
+    vdom_names: set[str],
+    management_vdom: str,
+) -> dict[DNSServerKey, dict[str, Any]] | None:
+    """Return each VDOM's effective configured DNS servers."""
+    global_settings = global_response.get("results")
+    if not isinstance(global_settings, dict):
+        return None
+
+    vdom_settings: dict[str, dict[str, Any]] = {}
+    if vdom_response is not None:
+        normalized_vdom_settings = _vdom_dns_results(vdom_response)
+        if normalized_vdom_settings is None:
+            return None
+        vdom_settings = normalized_vdom_settings
+
+    results: dict[DNSServerKey, dict[str, Any]] = {}
+    for vdom_name in sorted(vdom_names or {management_vdom}):
+        effective_settings = global_settings
+        source = "Global"
+        override = vdom_settings.get(vdom_name)
+        if (
+            vdom_name != management_vdom
+            and isinstance(override, dict)
+            and override.get("vdom-dns") == "enable"
+        ):
+            effective_settings = override
+            source = "VDOM override"
+
+        for field, role in (("primary", "Primary"), ("secondary", "Secondary")):
+            ip_address = effective_settings.get(field)
+            if not isinstance(ip_address, str) or ip_address in {
+                "",
+                "0.0.0.0",
+                "::",
+            }:
+                continue
+
+            key = (vdom_name, ip_address)
+            record = results.setdefault(
+                key,
+                {
+                    "vdom": vdom_name,
+                    "ip": ip_address,
+                    "configuration_source": source,
+                    "roles": [],
+                },
+            )
+            record["roles"].append(role)
+
+    return results
+
+
+def _dns_latency_results(
+    response: dict[str, Any] | list[Any],
+    observed_at: datetime,
+) -> dict[DNSServerKey, dict[str, Any]] | None:
+    """Normalize per-VDOM DNS latency and calculate the last-test timestamp."""
+    envelopes = [response] if isinstance(response, dict) else response
+    results: dict[DNSServerKey, dict[str, Any]] = {}
+    response_shape_valid = False
+
+    for envelope in envelopes:
+        if not isinstance(envelope, dict):
+            continue
+
+        vdom_name = envelope.get("vdom")
+        latency_entries = envelope.get("results")
+        if not isinstance(vdom_name, str) or not vdom_name:
+            continue
+        if not isinstance(latency_entries, list):
+            continue
+
+        response_shape_valid = True
+        for entry in latency_entries:
+            if not isinstance(entry, dict):
+                continue
+
+            ip_address = entry.get("ip")
+            if not isinstance(ip_address, str) or not ip_address:
+                continue
+
+            record: dict[str, Any] = {
+                "vdom": vdom_name,
+                "ip": ip_address,
+            }
+            service = entry.get("service")
+            if isinstance(service, str) and service:
+                record["service"] = service
+
+            latency = entry.get("latency")
+            if isinstance(latency, (int, float)) and not isinstance(latency, bool):
+                record["latency"] = latency
+
+            last_update = entry.get("last_update")
+            if (
+                isinstance(last_update, (int, float))
+                and not isinstance(last_update, bool)
+                and last_update >= 0
+            ):
+                record["last_tested"] = (
+                    observed_at - timedelta(milliseconds=last_update)
+                ).replace(microsecond=0)
+
+            results[(vdom_name, ip_address)] = record
+
+    return results if response_shape_valid else None
+
+
 class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Poll FortiGate and distribute the latest AP data."""
 
@@ -139,11 +277,27 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "results": {},
             "available": False,
         }
+        self._dns_configuration: dict[str, Any] = {
+            "results": {},
+            "available": False,
+        }
+        self._dns_latency: dict[str, Any] = {
+            "results": {},
+            "available": False,
+        }
+        self._dns_servers: dict[str, Any] = {
+            "results": [],
+            "available": False,
+        }
+        self._dns_servers_by_key: dict[DNSServerKey, dict[str, Any]] = {}
         self._management_vdom: str | None = None
         self._vdom_list_error_logged = False
         self._vdom_global_error_logged = False
         self._vdom_resource_error_logged = False
+        self._dns_configuration_error_logged = False
+        self._dns_latency_error_logged = False
         self._vdom_inventory_updated_at: float | None = None
+        self._dns_configuration_updated_at: float | None = None
         self._wifi_meta_loaded = False
         self.wifi_meta: dict[str, Any] = {}
         self.radio_type_bands = RADIO_TYPE_BANDS.copy()
@@ -236,6 +390,39 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         resource_data = results.get(vdom_name)
         return resource_data if isinstance(resource_data, dict) else None
+
+    @property
+    def dns_server_keys(self) -> set[DNSServerKey]:
+        """Return the current VDOM and IP identity of every DNS server."""
+        return set(self._dns_servers_by_key)
+
+    @property
+    def dns_data_available(self) -> bool:
+        """Return whether DNS configuration or latency data is current."""
+        return bool(self._dns_servers.get("available"))
+
+    def get_dns_server(
+        self,
+        vdom_name: str,
+        ip_address: str,
+    ) -> dict[str, Any] | None:
+        """Return one DNS server record scoped to a VDOM."""
+        return self._dns_servers_by_key.get((vdom_name, ip_address))
+
+    def get_vdom_dns_servers(self, vdom_name: str) -> list[dict[str, Any]]:
+        """Return current DNS server records for one VDOM."""
+        return sorted(
+            (
+                record
+                for (record_vdom, _), record in self._dns_servers_by_key.items()
+                if record_vdom == vdom_name
+                and (
+                    record.get("configuration_available")
+                    or record.get("latency_available")
+                )
+            ),
+            key=lambda record: str(record.get("ip", "")),
+        )
 
     async def _async_get_vdom_inventory(self) -> dict[str, Any]:
         """Return VDOM inventory while retaining the last valid configuration."""
@@ -349,6 +536,146 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "available": True,
         }
         return self._vdom_resources
+
+    async def _async_get_dns_configuration(self) -> dict[str, Any]:
+        """Return effective DNS configuration without blocking wifi updates."""
+        if (
+            self._dns_configuration_updated_at is not None
+            and monotonic() - self._dns_configuration_updated_at
+            < _DNS_CONFIGURATION_REFRESH_INTERVAL_SECONDS
+        ):
+            return self._dns_configuration
+
+        vdom_names = self.vdom_names
+        management_vdom = self._management_vdom or (
+            min(vdom_names) if vdom_names else "root"
+        )
+
+        try:
+            global_response = await self.client.configuration.system.get_global_dns(
+                management_vdom
+            )
+            vdom_response = (
+                await self.client.configuration.system.get_vdom_dns()
+                if len(vdom_names) > 1
+                else None
+            )
+        except (ClientError, TimeoutError, TypeError) as err:
+            self._dns_configuration = {
+                **self._dns_configuration,
+                "available": False,
+            }
+            if not self._dns_configuration_error_logged:
+                _LOGGER.warning("Unable to load FortiGate DNS configuration: %s", err)
+                self._dns_configuration_error_logged = True
+            return self._dns_configuration
+
+        configured_servers = _configured_dns_servers(
+            global_response,
+            vdom_response,
+            vdom_names,
+            management_vdom,
+        )
+        if configured_servers is None:
+            self._dns_configuration = {
+                **self._dns_configuration,
+                "available": False,
+            }
+            if not self._dns_configuration_error_logged:
+                _LOGGER.warning(
+                    "FortiGate DNS configuration response has an unexpected shape"
+                )
+                self._dns_configuration_error_logged = True
+            return self._dns_configuration
+
+        self._dns_configuration_error_logged = False
+        self._dns_configuration_updated_at = monotonic()
+        self._dns_configuration = {
+            "results": configured_servers,
+            "available": True,
+        }
+        return self._dns_configuration
+
+    async def _async_get_dns_latency(self) -> dict[str, Any]:
+        """Return current DNS latency without blocking primary wifi updates."""
+        try:
+            response = await self.client.monitor.network.get_dns_latency()
+        except (ClientError, TimeoutError, TypeError) as err:
+            self._dns_latency = {
+                **self._dns_latency,
+                "available": False,
+            }
+            if not self._dns_latency_error_logged:
+                _LOGGER.warning("Unable to load FortiGate DNS latency: %s", err)
+                self._dns_latency_error_logged = True
+            return self._dns_latency
+
+        latency_results = _dns_latency_results(response, datetime.now(UTC))
+        if latency_results is None:
+            self._dns_latency = {
+                **self._dns_latency,
+                "available": False,
+            }
+            if not self._dns_latency_error_logged:
+                _LOGGER.warning(
+                    "FortiGate DNS latency response has no per-VDOM results"
+                )
+                self._dns_latency_error_logged = True
+            return self._dns_latency
+
+        self._dns_latency_error_logged = False
+        self._dns_latency = {
+            "results": latency_results,
+            "available": True,
+        }
+        return self._dns_latency
+
+    def _rebuild_dns_servers(self) -> dict[str, Any]:
+        """Combine configured and runtime-observed DNS servers by VDOM and IP."""
+        configuration_results = self._dns_configuration.get("results")
+        latency_results = self._dns_latency.get("results")
+        configuration = (
+            configuration_results if isinstance(configuration_results, dict) else {}
+        )
+        latency = latency_results if isinstance(latency_results, dict) else {}
+        configuration_available = bool(self._dns_configuration.get("available"))
+        latency_available = bool(self._dns_latency.get("available"))
+        records: dict[DNSServerKey, dict[str, Any]] = {}
+
+        for key in configuration.keys() | latency.keys():
+            configured_record = configuration.get(key)
+            latency_record = latency.get(key)
+            vdom_name, ip_address = key
+            record: dict[str, Any] = {
+                "vdom": vdom_name,
+                "ip": ip_address,
+                "configuration_available": configuration_available
+                and isinstance(configured_record, dict),
+                "latency_available": latency_available
+                and isinstance(latency_record, dict),
+                "configured": isinstance(configured_record, dict),
+            }
+            if isinstance(configured_record, dict):
+                record.update(configured_record)
+            else:
+                record["configuration_source"] = "Runtime discovered"
+                record["roles"] = []
+            if isinstance(latency_record, dict):
+                record.update(latency_record)
+            records[key] = record
+
+        self._dns_servers_by_key = records
+        self._dns_servers = {
+            "results": [records[key] for key in sorted(records)],
+            "available": configuration_available or latency_available,
+        }
+        return self._dns_servers
+
+    async def _async_get_dns_servers(self) -> dict[str, Any]:
+        """Return effective DNS servers and their runtime latency."""
+        await self._async_get_dns_configuration()
+        await self._async_get_dns_latency()
+        return self._rebuild_dns_servers()
 
     async def _async_get_arp_table(self) -> dict[str, Any]:
         """Return the ARP table, retaining the last table after request errors."""
@@ -726,6 +1053,7 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             dhcp_leases = await self._async_get_dhcp_leases()
             vdoms = await self._async_get_vdom_inventory()
             vdom_resources = await self._async_get_vdom_resources()
+            dns_servers = await self._async_get_dns_servers()
             configured_vaps = await self.client.configuration.wifi.get_vaps()
 
             data["wifi_clients"] = wifi_clients
@@ -747,6 +1075,7 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._index_dhcp_entries(dhcp_leases)
             data["vdoms"] = vdoms
             data["vdom_resources"] = vdom_resources
+            data["dns_servers"] = dns_servers
             data["configured_vaps"] = configured_vaps
             if not self.include_unassigned_ssids:
                 data[
