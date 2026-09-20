@@ -1,3 +1,8 @@
+import {
+  preferredDeviceName,
+  preferredNamesByDevice,
+} from "./fortios-kd-preferred-names.js";
+
 const THROUGHPUT_GRAPHS = [
   { metric: "tx_bits_per_second", title: "Calculated TX Rate" },
   { metric: "rx_bits_per_second", title: "Calculated RX Rate" },
@@ -163,6 +168,7 @@ function radioKey(deviceId, radioId) {
 }
 
 function graphModel(hass, group) {
+  const preferredNames = preferredNamesByDevice(hass);
   const selectedFortigate = selectedFilter(
     hass,
     "select.wifi_client_fortigate_filter",
@@ -231,7 +237,7 @@ function graphModel(hass, group) {
         const device = registryEntry(hass.devices, deviceId);
         const accessPointName = registryName(device, "Access point");
         const fortigate = registryEntry(hass.devices, device?.via_device_id);
-        const fortigateName = registryName(fortigate);
+        const fortigateName = preferredDeviceName(preferredNames, fortigate);
         const radioId = state.attributes.fortios_kd_radio_id;
         const ssids =
           scope === "radio"

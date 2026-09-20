@@ -1,3 +1,8 @@
+import {
+  preferredDeviceName,
+  preferredNamesByDevice,
+} from "./fortios-kd-preferred-names.js";
+
 const ARP_TABLE_CARD_ELEMENT = "fortios-kd-arp-table";
 const STRATEGY_ELEMENT = "ll-strategy-dashboard-fortios-kd-arp-table";
 const UNAVAILABLE_STATES = new Set(["unknown", "unavailable", ""]);
@@ -78,6 +83,7 @@ function scopedIpKey(fortigateDeviceId, ipAddress) {
 }
 
 function arpTableModel(hass) {
+  const preferredNames = preferredNamesByDevice(hass);
   const selectedFortigate =
     currentStateValue(hass, "select.arp_table_fortigate_filter") || FILTER_ALL;
   const selectedInterface =
@@ -194,8 +200,11 @@ function arpTableModel(hass) {
       hass.devices,
       arpDevice?.via_device_id,
     );
-    const fortigateName =
-      fortigateDevice?.name || registryName(fortigateDevice, "FortiGate");
+    const fortigateName = preferredDeviceName(
+      preferredNames,
+      fortigateDevice,
+      "FortiGate",
+    );
     const accessPointByMac = entry.matchId
       ? accessPointsByMatchId.get(entry.matchId)
       : undefined;

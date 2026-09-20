@@ -1,3 +1,8 @@
+import {
+  preferredDeviceName,
+  preferredNamesByDevice,
+} from "./fortios-kd-preferred-names.js";
+
 const VDOM_GRAPH_CARD_ELEMENT = "fortios-kd-vdom-resource-graph-grid";
 const STRATEGY_ELEMENT =
   "ll-strategy-dashboard-fortios-kd-vdom-resources";
@@ -101,10 +106,6 @@ function registryEntry(registry, id) {
   return registry?.get?.(id) ?? registry?.[id];
 }
 
-function registryName(entry, fallback = "") {
-  return entry?.name_by_user || entry?.name || fallback;
-}
-
 function selectedFilter(hass, entityId) {
   return hass.states[entityId]?.state || FILTER_ALL;
 }
@@ -159,6 +160,7 @@ function applyHistoryGraphLegendLayout(card) {
 }
 
 function vdomResourceModel(hass) {
+  const preferredNames = preferredNamesByDevice(hass);
   const selectedFortigate = selectedFilter(
     hass,
     "select.vdom_resources_firewall_filter",
@@ -195,7 +197,11 @@ function vdomResourceModel(hass) {
       hass.devices,
       vdomDevice?.via_device_id,
     );
-    const fortigateName = registryName(fortigateDevice, "FortiGate");
+    const fortigateName = preferredDeviceName(
+      preferredNames,
+      fortigateDevice,
+      "FortiGate",
+    );
     const vdomName = state.attributes.fortios_kd_vdom;
     if (!entity?.device_id || typeof vdomName !== "string" || !vdomName) {
       continue;

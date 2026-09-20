@@ -170,6 +170,33 @@ async def test_fortigate_options(hass: Any) -> None:
     assert manager.selected_ssid == FILTER_ALL
 
 
+async def test_preferred_name_updates_filters_and_active_selections(hass: Any) -> None:
+    """Test a preferred name immediately replaces the registered hub name."""
+    from custom_components.fortios_kd.filter_manager import (  # noqa: PLC0415
+        FortiOSKDFilterManager,
+    )
+
+    manager = FortiOSKDFilterManager(hass)
+    coordinator = _mock_coordinator("OfficeAP", "OfficeWifi")
+    _register_hub(manager, "entry-a", "FortiGate80E", coordinator)
+
+    manager.select_fortigate("FortiGate80E")
+    manager.select_arp_fortigate("FortiGate80E")
+    manager.select_dhcp_fortigate("FortiGate80E")
+    manager.select_vdom_fortigate("FortiGate80E")
+
+    manager.update_hub_name("entry-a", "OfficeGate80E")
+
+    assert manager.fortigate_options == ["All", "OfficeGate80E"]
+    assert manager.arp_fortigate_options == ["All", "OfficeGate80E"]
+    assert manager.dhcp_fortigate_options == ["All", "OfficeGate80E"]
+    assert manager.vdom_fortigate_options == ["All", "OfficeGate80E"]
+    assert manager.selected_fortigate == "OfficeGate80E"
+    assert manager.selected_arp_fortigate == "OfficeGate80E"
+    assert manager.selected_dhcp_fortigate == "OfficeGate80E"
+    assert manager.selected_vdom_fortigate == "OfficeGate80E"
+
+
 async def test_live_updates_masking_and_ownership(hass: Any) -> None:
     """Test coordinator notifications, masking, and select ownership."""
     from custom_components.fortios_kd.filter_manager import (  # noqa: PLC0415

@@ -179,6 +179,24 @@ class FortiOSKDFilterManager:
             self._selected_vdom = FILTER_ALL
         self._handle_coordinator_update()
 
+    def update_hub_name(self, entry_id: str, name: str) -> None:
+        """Update a FortiGate display name and preserve active selections."""
+        hub = self._hubs.get(entry_id)
+        if hub is None or hub.name == name:
+            return
+
+        old_name = hub.name
+        hub.name = name
+        for attribute in (
+            "_selected_fortigate",
+            "_selected_arp_fortigate",
+            "_selected_dhcp_fortigate",
+            "_selected_vdom_fortigate",
+        ):
+            if getattr(self, attribute) == old_name:
+                setattr(self, attribute, name)
+        self._handle_coordinator_update()
+
     @property
     def has_hubs(self) -> bool:
         """Return whether any FortiGate hubs are registered."""

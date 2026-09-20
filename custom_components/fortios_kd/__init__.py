@@ -25,6 +25,7 @@ from .const import (
     CONF_MASK_SERIAL_NUMBERS,
     CONF_MASK_SSIDS,
     CONF_MATCH_ARP_WIFI_CLIENTS,
+    CONF_PREFERRED_NAME,
     CONF_REQUEST_TIMEOUT,
     CONF_SNMP_COMMUNITY,
     CONF_SNMP_PORT,
@@ -52,7 +53,7 @@ from .repairs import async_delete_snmp_arp_issue
 from .snmp_arp import FortiOSKDSnmpArpClient
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.SELECT]
+PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.SELECT, Platform.TEXT]
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -135,9 +136,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     fortigate_serial = str(status["serial"])
     displayed_fortigate_hostname = (
-        mask_name(fortigate_hostname)
-        if mask_serial_numbers
-        else fortigate_hostname
+        mask_name(fortigate_hostname) if mask_serial_numbers else fortigate_hostname
     )
     fortigate_device = dr.async_get(hass).async_get_or_create(
         config_entry_id=entry.entry_id,
@@ -150,19 +149,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         else fortigate_serial,
         sw_version=status["version"],
     )
+    default_preferred_name = (
+        fortigate_device.name_by_user
+        or fortigate_device.name
+        or displayed_fortigate_hostname
+    )
+    stored_preferred_name = entry.data.get(CONF_PREFERRED_NAME)
+    preferred_name = (
+        stored_preferred_name.strip()
+        if isinstance(stored_preferred_name, str) and stored_preferred_name.strip()
+        else default_preferred_name
+    )
     domain_data[entry.entry_id] = {
         "client": client,
         "status": status,
         "coordinator": coordinator,
         "fortigate_device_id": fortigate_device.id,
         "fortigate_display_name": displayed_fortigate_hostname,
+        "fortigate_default_preferred_name": default_preferred_name,
+        "fortigate_preferred_name": preferred_name,
         "organization_manager": organization_manager,
     }
     organization_manager.setup()
 
     manager.register_hub(
         entry.entry_id,
-        displayed_fortigate_hostname,
+        preferred_name,
         coordinator,
         mask_ap_names=entry.data.get(CONF_MASK_AP_NAMES, DEFAULT_MASK_AP_NAMES),
         mask_ssids=entry.data.get(CONF_MASK_SSIDS, DEFAULT_MASK_SSIDS),
