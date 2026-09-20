@@ -382,10 +382,13 @@ dashboard strategies automatically. After restarting Home Assistant, open
   wifi-client matches. Its independent FortiGate and Interface filters narrow
   the displayed leases. Its suggested title is **KD DHCP Entries** and its
   suggested URL is `kd-dhcp-entries`.
-- **FortiOS KD VDOM Resources** for per-VDOM CPU, memory, active-session, and
-  session-usage history. Its Firewall and VDOM filters can display matching
-  VDOMs together for comparison or as separate graph groups. Its suggested
-  title is **KD VDOM Resources** and its suggested URL is `kd-vdom-resources`.
+- **FortiOS KD VDOM Resources** for per-VDOM CPU, memory, active-session,
+  session-usage, and configured DNS-server latency history. Its Firewall and
+  VDOM filters can display matching VDOMs together for comparison or as
+  separate graph groups. Combined DNS legends include the preferred FortiGate
+  name when multiple firewalls are visible; filtered and separate-card views
+  use the DNS-server IP alone. Its suggested title is **KD VDOM Resources** and
+  its suggested URL is `kd-vdom-resources`.
 
 The Wifi client dashboard explicitly excludes ARP devices. The Wifi client and
 graph dashboards share the FortiGate, AP, and SSID filter selects. The graph

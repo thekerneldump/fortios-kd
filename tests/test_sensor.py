@@ -267,6 +267,15 @@ def test_dns_server_entities_are_linked_through_vdom_device() -> None:
     latency_entity = next(entity for entity in entities if entity.name == "Latency")
     ip_entity = next(entity for entity in entities if entity.name == "IP address")
 
+    assert latency_entity.extra_state_attributes == {
+        "fortios_kd_entry_type": "dns_server",
+        "fortios_kd_dns_field": "latency",
+        "fortios_kd_vdom": "root",
+        "fortios_kd_dns_ip": "203.0.113.53",
+        "fortios_kd_metric": "dns_latency",
+        "fortios_kd_scope": "dns_server",
+    }
+
     assert not latency_entity.available
     assert ip_entity.available
 

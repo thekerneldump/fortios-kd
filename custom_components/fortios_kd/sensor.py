@@ -1406,12 +1406,20 @@ class FortiGateDNSServerMetric(FortiGateChangedCoordinatorSensor):
         self._attr_state_class = state_class
         if field == "latency":
             self._attr_suggested_display_precision = 0
-        self._attr_extra_state_attributes = {
+        extra_state_attributes = {
             "fortios_kd_entry_type": "dns_server",
             "fortios_kd_dns_field": field,
             "fortios_kd_vdom": vdom_name,
             "fortios_kd_dns_ip": ip_address,
         }
+        if field == "latency":
+            extra_state_attributes.update(
+                {
+                    "fortios_kd_metric": "dns_latency",
+                    "fortios_kd_scope": "dns_server",
+                }
+            )
+        self._attr_extra_state_attributes = extra_state_attributes
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, dns_identifier)},
             name=f"DNS {ip_address} ({vdom_name}, {fortigate_name})",

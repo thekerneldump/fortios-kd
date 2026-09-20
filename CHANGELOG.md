@@ -16,7 +16,10 @@ are recorded here for each release.
   Each DNS device is linked through its VDOM using the Home Assistant
   2025.12-compatible device relationship and provides IP address, VDOM,
   configuration source, and configured role. VDOM devices also expose a DNS
-  server summary entity.
+  server summary entity. Add configured DNS-server latency to the **KD VDOM
+  Resources** dashboard, with preferred FortiGate names in combined legends
+  and compact IP-only legends when filtered to one firewall or grouped into
+  separate VDOM cards.
 
 ## 0.6.0 - 2026-09-19
 

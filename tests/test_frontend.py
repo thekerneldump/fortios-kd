@@ -243,13 +243,17 @@ async def test_vdom_resource_dashboard_strategy_asset(hass: HomeAssistant) -> No
     assert 'name: "Firewall"' in source
     assert 'name: "VDOM"' in source
     assert 'name: "Graph layout"' in source
-    assert 'state.attributes.fortios_kd_scope !== "vdom"' in source
+    assert 'const isVdomResource = scope === "vdom"' in source
+    assert 'scope === "dns_server" && metric === "dns_latency"' in source
     assert "fortios_kd_vdom" in source
     assert 'metric: "cpu"' in source
     assert 'metric: "memory"' in source
     assert 'metric: "session_current_usage"' in source
     assert 'metric: "session_usage_percent"' in source
     assert 'title: "Session Usage Percent"' in source
+    assert 'metric: "dns_latency"' in source
+    assert 'title: "DNS Latency"' in source
+    assert "entityDevice?.via_device_id" in source
     assert "vdomDevice?.via_device_id" in source
     assert 'from "./fortios-kd-preferred-names.js"' in source
     assert "preferredNamesByDevice(hass)" in source
@@ -259,8 +263,12 @@ async def test_vdom_resource_dashboard_strategy_asset(hass: HomeAssistant) -> No
     assert 'const GRAPH_LAYOUT_COMBINED = "Combined by resource"' in source
     assert 'const GRAPH_LAYOUT_SEPARATE = "Separate by VDOM"' in source
     assert 'key: "combined"' in source
-    assert "name: `${item.fortigateName} · ${item.vdomName}`" in source
-    assert "group.entitiesByMetric.get(graph.metric)" in source
+    assert "`${item.fortigateName} · ${item.vdomName}`" in source
+    assert "group.entitiesByMetric.get(item.metric) || []" in source
+    assert "group.entitiesByMetric.get(graph.metric) || []" in source
+    assert "selectedFortigate === FILTER_ALL" in source
+    assert "`${item.fortigateName} - ${item.dnsIp}`" in source
+    assert "? item.dnsIp" in source
     assert "title.textContent = group.title" in source
     assert "applyHistoryGraphLegendLayout" in source
     assert "display: grid !important" in source
