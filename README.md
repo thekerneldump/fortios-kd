@@ -27,8 +27,7 @@ are recorded in the [changelog](CHANGELOG.md).
   devices, preserving multiple leases for the same MAC and linking exact-MAC
   wifi clients in both directions.
 - Represent effective DNS servers as VDOM-scoped devices, including global
-  configuration, per-VDOM overrides, runtime-discovered servers, latency, and
-  last-tested time.
+  configuration, per-VDOM overrides, latency, and last-tested time.
 - Poll all hubs through Home Assistant `DataUpdateCoordinator` instances.
 - Keep disconnected client entities available for troubleshooting, with their
   live measurements marked unavailable.
@@ -152,9 +151,9 @@ permission, DHCP entities remain unavailable without blocking wifi monitoring.
   so the same inherited server remains distinguishable in different VDOMs.
 - DNS devices expose IP address, VDOM, configuration source, configured role,
   current latency in milliseconds, and the calculated last-tested timestamp.
-- Configuration source reports **Global**, **VDOM override**, or **Runtime
-  discovered**. Runtime-only entries include servers learned dynamically by
-  FortiOS even when they are absent from `config system dns`.
+- Configuration source reports **Global** or **VDOM override**, while configured
+  role reports **Primary** or **Secondary**. Runtime latency entries enrich
+  matching configured servers but do not independently create devices.
 - Each VDOM device exposes a **DNS servers** summary entity in addition to the
   connected DNS-server devices.
 

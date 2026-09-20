@@ -642,24 +642,18 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         latency_available = bool(self._dns_latency.get("available"))
         records: dict[DNSServerKey, dict[str, Any]] = {}
 
-        for key in configuration.keys() | latency.keys():
-            configured_record = configuration.get(key)
+        for key, configured_record in configuration.items():
             latency_record = latency.get(key)
             vdom_name, ip_address = key
             record: dict[str, Any] = {
                 "vdom": vdom_name,
                 "ip": ip_address,
-                "configuration_available": configuration_available
-                and isinstance(configured_record, dict),
+                "configuration_available": configuration_available,
                 "latency_available": latency_available
                 and isinstance(latency_record, dict),
-                "configured": isinstance(configured_record, dict),
+                "configured": True,
             }
-            if isinstance(configured_record, dict):
-                record.update(configured_record)
-            else:
-                record["configuration_source"] = "Runtime discovered"
-                record["roles"] = []
+            record.update(configured_record)
             if isinstance(latency_record, dict):
                 record.update(latency_record)
             records[key] = record
@@ -667,7 +661,7 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._dns_servers_by_key = records
         self._dns_servers = {
             "results": [records[key] for key in sorted(records)],
-            "available": configuration_available or latency_available,
+            "available": configuration_available,
         }
         return self._dns_servers
 

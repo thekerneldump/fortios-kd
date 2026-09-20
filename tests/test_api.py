@@ -492,17 +492,6 @@ async def test_monitor_api(
                 },
                 {
                     "vdom": "root",
-                    "ip": "198.51.100.53",
-                    "configuration_available": False,
-                    "latency_available": True,
-                    "configured": False,
-                    "configuration_source": "Runtime discovered",
-                    "roles": [],
-                    "service": "dns_server",
-                    "latency": 12,
-                },
-                {
-                    "vdom": "root",
                     "ip": "203.0.113.53",
                     "configuration_available": True,
                     "latency_available": True,
@@ -554,7 +543,6 @@ async def test_monitor_api(
     assert coordinator.dns_server_keys == {
         ("lab", "192.0.2.53"),
         ("lab", "192.0.2.54"),
-        ("root", "198.51.100.53"),
         ("root", "203.0.113.53"),
         ("root", "203.0.113.54"),
     }
