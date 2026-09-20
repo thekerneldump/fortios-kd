@@ -29,3 +29,11 @@ class FortiOSSystemApi:
     async def get_dhcp_leases(self) -> dict[str, Any]:
         """Return current DHCP leases."""
         return await self._http.get("monitor/system/dhcp")
+
+    async def get_vdom_resources(self) -> dict[str, Any] | list[Any]:
+        """Return resource utilization for every virtual domain."""
+        return await self._http.get(
+            "monitor/system/vdom-resource",
+            params={"vdom": "*"},
+            allow_list=True,
+        )

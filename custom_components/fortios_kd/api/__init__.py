@@ -1,5 +1,6 @@
 """FortiOS API facade."""
 
+import logging
 from typing import Any
 
 from aiohttp import ClientSession
@@ -10,6 +11,8 @@ from .context import FortiOSApiContext
 from .monitor import FortiOSMonitorApi
 from .version import FortiOSVersion
 from .versions import async_enrich_system_status
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class FortiOSApi:
@@ -25,6 +28,8 @@ class FortiOSApi:
         request_timeout: int = 60,
     ) -> None:
         """Initialize the FortiOS API."""
+        self.context = FortiOSApiContext()
+        self._status: dict[str, Any] | None = None
         self._http = FortiOSHttpClient(
             session,
             host,
@@ -32,15 +37,47 @@ class FortiOSApi:
             api_key,
             verify_ssl,
             request_timeout,
+            self._observe_response,
         )
-        self.context = FortiOSApiContext()
         self.configuration = FortiOSConfigurationApi(self._http, self.context)
         self.monitor = FortiOSMonitorApi(self._http, self.context)
+
+    def _observe_response(self, response: dict[str, Any]) -> None:
+        """Refresh the cached FortiOS version from any API response."""
+        version_text = response.get("version")
+        if not isinstance(version_text, str):
+            return
+
+        try:
+            version = FortiOSVersion.parse(version_text)
+        except ValueError:
+            _LOGGER.debug("Ignoring invalid FortiOS response version %r", version_text)
+            return
+
+        previous_version = self.context.version
+        self.context.version = version
+        self.context.version_text = version_text.strip()
+        if self._status is not None:
+            self._status["version"] = self.context.version_text
+
+        if previous_version is not None and previous_version != version:
+            _LOGGER.info(
+                "FortiOS version changed from %s.%s.%s to %s",
+                previous_version.major,
+                previous_version.minor,
+                previous_version.patch,
+                self.context.version_text,
+            )
 
     @property
     def version(self) -> FortiOSVersion | None:
         """Return the detected FortiOS version."""
         return self.context.version
+
+    @property
+    def version_text(self) -> str | None:
+        """Return the latest FortiOS version text reported by the API."""
+        return self.context.version_text
 
     @property
     def supports_network_arp(self) -> bool:
@@ -57,10 +94,13 @@ class FortiOSApi:
 
         fortios_version = FortiOSVersion.parse(version)
         self.context.version = fortios_version
+        self.context.version_text = version.strip()
 
-        return await async_enrich_system_status(
+        status = await async_enrich_system_status(
             status,
             self.context,
             self.configuration,
             self.monitor,
         )
+        self._status = status
+        return status

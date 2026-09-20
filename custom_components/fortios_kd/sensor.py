@@ -239,6 +239,7 @@ async def async_setup_entry(
     }
 
     coordinator: FortiOSKDCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    known_vdoms = set(coordinator.vdom_names)
     radio_type_bands = coordinator.radio_type_bands
     aps = coordinator.data["results"]
     wifi_clients = coordinator.data["wifi_clients"]["results"]
@@ -286,7 +287,30 @@ async def async_setup_entry(
 
     async_add_entities(
         [
-            FortiGateVersionSensor(entry, status, mask_serial_numbers),
+            FortiGateVersionSensor(
+                coordinator,
+                entry,
+                status,
+                mask_serial_numbers,
+            ),
+            *(
+                FortiGateVDOMNameSensor(
+                    coordinator,
+                    fortigate_serial,
+                    vdom_name,
+                )
+                for vdom_name in sorted(known_vdoms)
+            ),
+            *(
+                entity
+                for vdom_name in sorted(known_vdoms)
+                for entity in create_vdom_resource_entities(
+                    coordinator,
+                    fortigate_serial,
+                    displayed_fortigate_hostname,
+                    vdom_name,
+                )
+            ),
             *(
                 entity
                 for client in client_records
@@ -667,6 +691,32 @@ async def async_setup_entry(
         ]
     )
 
+    def _add_new_vdom_sensors() -> None:
+        new_vdoms = coordinator.vdom_names - known_vdoms
+        if not new_vdoms:
+            return
+
+        known_vdoms.update(new_vdoms)
+        async_add_entities(
+            entity
+            for vdom_name in sorted(new_vdoms)
+            for entity in (
+                FortiGateVDOMNameSensor(
+                    coordinator,
+                    fortigate_serial,
+                    vdom_name,
+                ),
+                *create_vdom_resource_entities(
+                    coordinator,
+                    fortigate_serial,
+                    displayed_fortigate_hostname,
+                    vdom_name,
+                ),
+            )
+        )
+
+    entry.async_on_unload(coordinator.async_add_listener(_add_new_vdom_sensors))
+
     def _add_new_wifi_clients() -> None:
         new_entities: list[SensorEntity] = []
         current_clients = coordinator.data.get("wifi_clients", {}).get("results", [])
@@ -750,7 +800,7 @@ async def async_setup_entry(
 
     device_registry = dr.async_get(hass)
 
-    fortigate_device = device_registry.async_get_or_create(
+    device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, status["serial"])},
         name=(
@@ -771,34 +821,230 @@ async def async_setup_entry(
             name=mask_name(ap["name"]) if mask_ap_names else ap["name"],
             manufacturer="Fortinet",
             serial_number=mask_serial(serial) if mask_serial_numbers else serial,
-            via_device_id=fortigate_device.id,
+            via_device=(DOMAIN, status["serial"]),
         )
 
 
-class FortiGateVersionSensor(SensorEntity):
+class FortiGateVersionSensor(CoordinatorEntity[FortiOSKDCoordinator], SensorEntity):
+    """Report the latest FortiOS version observed in an API response."""
+
     _attr_has_entity_name = True
     _attr_name = "Firmware version"
 
     def __init__(
         self,
+        coordinator: FortiOSKDCoordinator,
         entry: ConfigEntry,
         status: dict[str, Any],
         mask_serial_numbers: bool,
     ) -> None:
+        """Initialize the firmware-version sensor."""
+        super().__init__(coordinator)
         serial = status["serial"]
         details = status["results"]
         hostname = details.get("hostname") or entry.title
 
+        self._serial = serial
+        self._initial_version = status["version"]
+        self._last_device_version = self._initial_version
         self._attr_unique_id = f"{serial}_firmware_version"
-        self._attr_native_value = status["version"]
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, serial)},
             name=mask_name(hostname) if mask_serial_numbers else hostname,
             manufacturer="Fortinet",
             model=details.get("model"),
             serial_number=mask_serial(serial) if mask_serial_numbers else serial,
-            sw_version=status["version"],
+            sw_version=self._initial_version,
         )
+
+    @property
+    def native_value(self) -> str:
+        """Return the latest version observed by the coordinator's API client."""
+        if self.coordinator.client.version_text is not None:
+            return self.coordinator.client.version_text
+
+        if isinstance(self.coordinator.data, dict):
+            response_version = self.coordinator.data.get("version")
+            if isinstance(response_version, str):
+                return response_version
+
+        return self._initial_version
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Update the firmware entity and FortiGate device when it changes."""
+        current_version = self.native_value
+        if current_version == self._last_device_version:
+            return
+
+        device_registry = dr.async_get(self.hass)
+        device = device_registry.async_get_device(identifiers={(DOMAIN, self._serial)})
+        if device is not None:
+            device_registry.async_update_device(
+                device.id,
+                sw_version=current_version,
+            )
+        self._last_device_version = current_version
+        self.async_write_ha_state()
+
+
+class FortiGateVDOMNameSensor(
+    CoordinatorEntity[FortiOSKDCoordinator],
+    SensorEntity,
+):
+    """Expose one configured VDOM on its FortiGate device."""
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:server-network"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: FortiOSKDCoordinator,
+        fortigate_serial: str,
+        vdom_name: str,
+    ) -> None:
+        """Initialize a FortiGate VDOM name sensor."""
+        super().__init__(coordinator)
+        self._vdom_name = vdom_name
+        self._attr_name = f"VDOM {vdom_name}"
+        self._attr_unique_id = f"{fortigate_serial}_vdom_{vdom_name}_name"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, fortigate_serial)},
+        )
+
+    @property
+    def available(self) -> bool:
+        """Return whether this VDOM remains in the current inventory."""
+        return (
+            super().available
+            and self.coordinator.vdom_data_available
+            and self._vdom_name in self.coordinator.vdom_names
+        )
+
+    @property
+    def native_value(self) -> str:
+        """Return the configured VDOM name."""
+        return self._vdom_name
+
+    @property
+    def extra_state_attributes(self) -> dict[str, bool | None]:
+        """Identify whether this is the current management VDOM."""
+        management_vdom = self.coordinator.management_vdom
+        return {
+            "management_vdom": (
+                self._vdom_name == management_vdom
+                if management_vdom is not None
+                else None
+            )
+        }
+
+
+class FortiGateVDOMResourceSensor(
+    CoordinatorEntity[FortiOSKDCoordinator],
+    SensorEntity,
+):
+    """Expose one numerical resource metric for a FortiGate VDOM."""
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(
+        self,
+        coordinator: FortiOSKDCoordinator,
+        fortigate_serial: str,
+        fortigate_name: str,
+        vdom_name: str,
+        field_path: tuple[str, ...],
+        name: str,
+        icon: str,
+        unit: str,
+    ) -> None:
+        """Initialize a VDOM resource sensor."""
+        super().__init__(coordinator)
+        self._vdom_name = vdom_name
+        self._field_path = field_path
+        metric_id = "_".join(field_path)
+        vdom_identifier = f"{fortigate_serial}_vdom_{vdom_name}"
+
+        self._attr_name = name
+        self._attr_icon = icon
+        self._attr_native_unit_of_measurement = unit
+        self._attr_unique_id = f"{vdom_identifier}_{metric_id}"
+        self._attr_extra_state_attributes = {
+            "fortios_kd_metric": metric_id,
+            "fortios_kd_scope": "vdom",
+            "fortios_kd_vdom": vdom_name,
+        }
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, vdom_identifier)},
+            name=f"VDOM {vdom_name} ({fortigate_name})",
+            manufacturer="Fortinet",
+            model="FortiOS Virtual Domain",
+            via_device=(DOMAIN, fortigate_serial),
+        )
+
+    def _resource_value(self) -> Any:
+        """Return the configured nested metric from the latest response."""
+        value: Any = self.coordinator.get_vdom_resources(self._vdom_name)
+        for field in self._field_path:
+            if not isinstance(value, dict):
+                return None
+            value = value.get(field)
+        return value
+
+    @property
+    def available(self) -> bool:
+        """Return whether the VDOM resource metric is currently available."""
+        value = self._resource_value()
+        return (
+            super().available
+            and self.coordinator.vdom_resource_data_available
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+        )
+
+    @property
+    def native_value(self) -> int | float | None:
+        """Return the latest numerical resource value."""
+        value = self._resource_value()
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return value
+        return None
+
+
+def create_vdom_resource_entities(
+    coordinator: FortiOSKDCoordinator,
+    fortigate_serial: str,
+    fortigate_name: str,
+    vdom_name: str,
+) -> list[FortiGateVDOMResourceSensor]:
+    """Create numerical resource sensors for one VDOM device."""
+    definitions = (
+        (("cpu",), "CPU usage", "mdi:cpu-64-bit", PERCENTAGE),
+        (("memory",), "Memory usage", "mdi:memory", PERCENTAGE),
+        (
+            ("session", "current_usage"),
+            "Sessions",
+            "mdi:swap-horizontal",
+            "sessions",
+        ),
+        (("session", "usage_percent"), "Session usage", "mdi:gauge", PERCENTAGE),
+    )
+    return [
+        FortiGateVDOMResourceSensor(
+            coordinator,
+            fortigate_serial,
+            fortigate_name,
+            vdom_name,
+            field_path,
+            name,
+            icon,
+            unit,
+        )
+        for field_path, name, icon, unit in definitions
+    ]
 
 
 class FortiGateAPSerialSensor(SensorEntity):

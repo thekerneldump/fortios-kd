@@ -21,3 +21,15 @@ class FortiOSSystemConfigurationApi:
     async def get_global(self) -> dict[str, Any]:
         """Return global system configuration."""
         return await self._http.get("cmdb/system/global?format=hostname")
+
+    async def get_vdoms(self) -> dict[str, Any] | list[Any]:
+        """Return every configured virtual domain."""
+        return await self._http.get(
+            "cmdb/system/vdom",
+            params={"vdom": "*"},
+            allow_list=True,
+        )
+
+    async def get_vdom_global_settings(self) -> dict[str, Any]:
+        """Return the global settings that identify the management VDOM."""
+        return await self._http.get("cmdb/system/global?format=management-vdom")

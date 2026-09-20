@@ -210,6 +210,49 @@ async def test_dhcp_dashboard_strategy_asset(hass: HomeAssistant) -> None:
     assert "type: `custom:${DHCP_CARD_ELEMENT}`" in source
 
 
+async def test_vdom_resource_dashboard_strategy_asset(hass: HomeAssistant) -> None:
+    """Test the VDOM resource dashboard discovers and groups resource graphs."""
+    integration = await async_get_integration(hass, DOMAIN)
+    await integration.async_get_component()
+
+    from custom_components.fortios_kd.frontend import FRONTEND_ASSETS  # noqa: PLC0415
+
+    path = FRONTEND_ASSETS["/fortios_kd/fortios-kd-vdom-resources-dashboard.js"]
+    source = path.read_text()
+
+    assert 'type: "fortios-kd-vdom-resources"' in source
+    assert 'title: "KD VDOM Resources"' in source
+    assert 'entity: "select.vdom_resources_firewall_filter"' in source
+    assert 'entity: "select.vdom_resources_vdom_filter"' in source
+    assert 'entity: "select.vdom_resources_graph_layout"' in source
+    assert 'name: "Firewall"' in source
+    assert 'name: "VDOM"' in source
+    assert 'name: "Graph layout"' in source
+    assert 'state.attributes.fortios_kd_scope !== "vdom"' in source
+    assert "fortios_kd_vdom" in source
+    assert 'metric: "cpu"' in source
+    assert 'metric: "memory"' in source
+    assert 'metric: "session_current_usage"' in source
+    assert 'metric: "session_usage_percent"' in source
+    assert 'title: "Session Usage Percent"' in source
+    assert "vdomDevice?.via_device_id" in source
+    assert "class FortiOSKDVDOMResourceGraphGrid extends HTMLElement" in source
+    assert "type: `custom:${VDOM_GRAPH_CARD_ELEMENT}`" in source
+    assert 'const GRAPH_LAYOUT_COMBINED = "Combined by resource"' in source
+    assert 'const GRAPH_LAYOUT_SEPARATE = "Separate by VDOM"' in source
+    assert 'key: "combined"' in source
+    assert "name: `${item.fortigateName} · ${item.vdomName}`" in source
+    assert "group.entitiesByMetric.get(graph.metric)" in source
+    assert "title.textContent = group.title" in source
+    assert "applyHistoryGraphLegendLayout" in source
+    assert "display: grid !important" in source
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr)) !important" in source
+    assert "justify-self: end" in source
+    assert "chartRoot.adoptedStyleSheets" in source
+    assert "new IntersectionObserver" in source
+    assert 'rootMargin: "200px 0px"' in source
+
+
 async def test_all_frontend_assets_are_loaded(hass: HomeAssistant) -> None:
     """Test that one loader imports every dashboard strategy module."""
     integration = await async_get_integration(hass, DOMAIN)
@@ -222,7 +265,7 @@ async def test_all_frontend_assets_are_loaded(hass: HomeAssistant) -> None:
         FRONTEND_MODULE_URLS,
     )
 
-    assert len(FRONTEND_ASSETS) == 6
+    assert len(FRONTEND_ASSETS) == 7
     assert len(FRONTEND_MODULE_URLS) == 1
     assert FRONTEND_MODULE_URLS[0].startswith(f"{FRONTEND_LOADER_URL}?v=")
 
@@ -232,3 +275,4 @@ async def test_all_frontend_assets_are_loaded(hass: HomeAssistant) -> None:
     assert 'import "./fortios-kd-arp-dashboard.js";' in loader_source
     assert 'import "./fortios-kd-arp-table-dashboard.js";' in loader_source
     assert 'import "./fortios-kd-dhcp-dashboard.js";' in loader_source
+    assert 'import "./fortios-kd-vdom-resources-dashboard.js";' in loader_source

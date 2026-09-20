@@ -22,6 +22,8 @@ FILTER_NO_LABELS = "No Labels"
 FILTER_NO_DHCP_LEASE = "No DHCP lease"
 FILTER_RESERVED = "Reserved"
 FILTER_LEASED = "Leased"
+VDOM_GRAPH_LAYOUT_COMBINED = "Combined by resource"
+VDOM_GRAPH_LAYOUT_SEPARATE = "Separate by VDOM"
 CLIENT_IDENTIFIER_MARKER = "_wifi_client_"
 
 
@@ -57,6 +59,9 @@ class FortiOSKDFilterManager:
         self._selected_arp_lease_type = FILTER_ALL
         self._selected_dhcp_fortigate = FILTER_ALL
         self._selected_dhcp_interface = FILTER_ALL
+        self._selected_vdom_fortigate = FILTER_ALL
+        self._selected_vdom = FILTER_ALL
+        self._selected_vdom_graph_layout = VDOM_GRAPH_LAYOUT_COMBINED
         self._listeners: set[Callable[[], None]] = set()
         self._owner_entry_id: str | None = None
         self._remove_registry_listeners = [
@@ -108,6 +113,10 @@ class FortiOSKDFilterManager:
             self._selected_dhcp_fortigate = FILTER_ALL
         if self._selected_dhcp_interface not in self.dhcp_interface_options:
             self._selected_dhcp_interface = FILTER_ALL
+        if self._selected_vdom_fortigate not in self.vdom_fortigate_options:
+            self._selected_vdom_fortigate = FILTER_ALL
+        if self._selected_vdom not in self.vdom_options:
+            self._selected_vdom = FILTER_ALL
         self._notify_listeners()
 
     @callback
@@ -165,6 +174,9 @@ class FortiOSKDFilterManager:
         if self._selected_dhcp_fortigate not in self.dhcp_fortigate_options:
             self._selected_dhcp_fortigate = FILTER_ALL
             self._selected_dhcp_interface = FILTER_ALL
+        if self._selected_vdom_fortigate not in self.vdom_fortigate_options:
+            self._selected_vdom_fortigate = FILTER_ALL
+            self._selected_vdom = FILTER_ALL
         self._handle_coordinator_update()
 
     @property
@@ -595,4 +607,75 @@ class FortiOSKDFilterManager:
             raise ValueError(f"Unknown DHCP interface option: {option}")
 
         self._selected_dhcp_interface = option
+        self._notify_listeners()
+
+    def _vdom_hubs(self) -> list[FortiOSKDFilterHub]:
+        """Return hubs matching the VDOM-resource FortiGate selection."""
+        return [
+            hub
+            for hub in self._hubs.values()
+            if hub.coordinator.vdom_names
+            and self._selected_vdom_fortigate in (FILTER_ALL, hub.name)
+        ]
+
+    @property
+    def vdom_fortigate_options(self) -> list[str]:
+        """Return FortiGates that currently expose VDOM inventory."""
+        names = {hub.name for hub in self._hubs.values() if hub.coordinator.vdom_names}
+        return [FILTER_ALL, *sorted(names, key=str.casefold)]
+
+    @property
+    def selected_vdom_fortigate(self) -> str:
+        """Return the selected VDOM-resource FortiGate."""
+        return self._selected_vdom_fortigate
+
+    def select_vdom_fortigate(self, option: str) -> None:
+        """Select a VDOM-resource FortiGate and reset the VDOM filter."""
+        if option not in self.vdom_fortigate_options:
+            raise ValueError(f"Unknown VDOM FortiGate option: {option}")
+
+        self._selected_vdom_fortigate = option
+        self._selected_vdom = FILTER_ALL
+        self._notify_listeners()
+
+    @property
+    def vdom_options(self) -> list[str]:
+        """Return VDOM names for the selected FortiGate."""
+        names = {
+            vdom_name
+            for hub in self._vdom_hubs()
+            for vdom_name in hub.coordinator.vdom_names
+            if isinstance(vdom_name, str) and vdom_name
+        }
+        return [FILTER_ALL, *sorted(names, key=str.casefold)]
+
+    @property
+    def selected_vdom(self) -> str:
+        """Return the selected VDOM name."""
+        return self._selected_vdom
+
+    def select_vdom(self, option: str) -> None:
+        """Select a VDOM resource group."""
+        if option not in self.vdom_options:
+            raise ValueError(f"Unknown VDOM option: {option}")
+
+        self._selected_vdom = option
+        self._notify_listeners()
+
+    @property
+    def vdom_graph_layout_options(self) -> list[str]:
+        """Return the available VDOM resource graph layouts."""
+        return [VDOM_GRAPH_LAYOUT_COMBINED, VDOM_GRAPH_LAYOUT_SEPARATE]
+
+    @property
+    def selected_vdom_graph_layout(self) -> str:
+        """Return the selected VDOM resource graph layout."""
+        return self._selected_vdom_graph_layout
+
+    def select_vdom_graph_layout(self, option: str) -> None:
+        """Select how VDOM resource history graphs are grouped."""
+        if option not in self.vdom_graph_layout_options:
+            raise ValueError(f"Unknown VDOM graph layout option: {option}")
+
+        self._selected_vdom_graph_layout = option
         self._notify_listeners()

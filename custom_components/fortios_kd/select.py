@@ -33,6 +33,9 @@ async def async_setup_entry(
             FortiOSKDFilterSelect(manager, "arp_lease_type"),
             FortiOSKDFilterSelect(manager, "dhcp_fortigate"),
             FortiOSKDFilterSelect(manager, "dhcp_interface"),
+            FortiOSKDFilterSelect(manager, "vdom_fortigate"),
+            FortiOSKDFilterSelect(manager, "vdom"),
+            FortiOSKDFilterSelect(manager, "vdom_graph_layout"),
         ]
     )
 
@@ -62,6 +65,9 @@ class FortiOSKDFilterSelect(SelectEntity):
             "arp_lease_type": "ARP Table Lease Type Filter",
             "dhcp_fortigate": "DHCP Entries FortiGate Filter",
             "dhcp_interface": "DHCP Entries Interface Filter",
+            "vdom_fortigate": "VDOM Resources Firewall Filter",
+            "vdom": "VDOM Resources VDOM Filter",
+            "vdom_graph_layout": "VDOM Resources Graph Layout",
         }[filter_type]
         self._attr_icon = {
             "fortigate": "mdi:shield-router",
@@ -74,6 +80,9 @@ class FortiOSKDFilterSelect(SelectEntity):
             "arp_lease_type": "mdi:ip-check",
             "dhcp_fortigate": "mdi:shield-router",
             "dhcp_interface": "mdi:lan-connect",
+            "vdom_fortigate": "mdi:shield-router",
+            "vdom": "mdi:server-network",
+            "vdom_graph_layout": "mdi:view-dashboard-variant",
         }[filter_type]
 
     @property
@@ -98,7 +107,13 @@ class FortiOSKDFilterSelect(SelectEntity):
             return self._manager.arp_lease_type_options
         if self._filter_type == "dhcp_fortigate":
             return self._manager.dhcp_fortigate_options
-        return self._manager.dhcp_interface_options
+        if self._filter_type == "dhcp_interface":
+            return self._manager.dhcp_interface_options
+        if self._filter_type == "vdom_fortigate":
+            return self._manager.vdom_fortigate_options
+        if self._filter_type == "vdom":
+            return self._manager.vdom_options
+        return self._manager.vdom_graph_layout_options
 
     @property
     @override
@@ -122,7 +137,13 @@ class FortiOSKDFilterSelect(SelectEntity):
             return self._manager.selected_arp_lease_type
         if self._filter_type == "dhcp_fortigate":
             return self._manager.selected_dhcp_fortigate
-        return self._manager.selected_dhcp_interface
+        if self._filter_type == "dhcp_interface":
+            return self._manager.selected_dhcp_interface
+        if self._filter_type == "vdom_fortigate":
+            return self._manager.selected_vdom_fortigate
+        if self._filter_type == "vdom":
+            return self._manager.selected_vdom
+        return self._manager.selected_vdom_graph_layout
 
     @override
     async def async_select_option(self, option: str) -> None:
@@ -145,8 +166,14 @@ class FortiOSKDFilterSelect(SelectEntity):
             self._manager.select_arp_lease_type(option)
         elif self._filter_type == "dhcp_fortigate":
             self._manager.select_dhcp_fortigate(option)
-        else:
+        elif self._filter_type == "dhcp_interface":
             self._manager.select_dhcp_interface(option)
+        elif self._filter_type == "vdom_fortigate":
+            self._manager.select_vdom_fortigate(option)
+        elif self._filter_type == "vdom":
+            self._manager.select_vdom(option)
+        else:
+            self._manager.select_vdom_graph_layout(option)
 
     @override
     async def async_added_to_hass(self) -> None:

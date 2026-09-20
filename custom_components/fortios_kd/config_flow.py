@@ -365,10 +365,7 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def _async_finish_configuration(self) -> ConfigFlowResult:
         """Create or update the config entry after organization choices."""
         self._clean_organization_data(self._pending_data)
-        if not (
-            self._pending_data.get(CONF_SYNC_ARP_TABLE)
-            and version_family(self._pending_version, "6.2")
-        ):
+        if not self._pending_data.get(CONF_SYNC_ARP_TABLE):
             self._pending_data.pop(CONF_SNMP_COMMUNITY, None)
             self._pending_data.pop(CONF_SNMP_PORT, None)
         host = self._pending_data[CONF_HOST]
@@ -432,7 +429,7 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
                 try:
                     await snmp_client.async_get_arp_table()
-                except (SnmpArpError, TimeoutError, ValueError):
+                except SnmpArpError, TimeoutError, ValueError:
                     errors["base"] = "snmp_cannot_connect"
                 else:
                     self._pending_data.update(user_input)

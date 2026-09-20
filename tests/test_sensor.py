@@ -94,6 +94,110 @@ def test_registered_dhcp_macs() -> None:
     assert _registered_dhcp_macs(entries, "FGT123") == {"aa:bb:cc:dd:ee:ff"}
 
 
+def test_firmware_version_uses_latest_coordinator_response() -> None:
+    """Test the firmware sensor follows versions observed during polling."""
+    from custom_components.fortios_kd.sensor import (  # noqa: PLC0415
+        FortiGateVersionSensor,
+    )
+
+    coordinator = Mock()
+    coordinator.data = {"version": "v6.2.17"}
+    coordinator.client.version_text = "v6.2.17"
+    entry = Mock()
+    entry.title = "Example FortiGate"
+    status = {
+        "serial": "FGT123",
+        "version": "v6.2.17",
+        "results": {"hostname": "Example FortiGate", "model": "FGT80E"},
+    }
+    entity = FortiGateVersionSensor(coordinator, entry, status, False)
+
+    assert entity.native_value == "v6.2.17"
+
+    coordinator.client.version_text = "v6.4.16"
+    coordinator.data = {"version": "v6.4.16"}
+
+    assert entity.native_value == "v6.4.16"
+
+
+def test_vdom_name_sensor_is_attached_to_fortigate() -> None:
+    """Test VDOM names are visible directly on their FortiGate device."""
+    from custom_components.fortios_kd.sensor import (  # noqa: PLC0415
+        FortiGateVDOMNameSensor,
+    )
+
+    coordinator = Mock()
+    coordinator.last_update_success = True
+    coordinator.vdom_data_available = True
+    coordinator.vdom_names = {"root", "Tunnels"}
+    coordinator.management_vdom = "root"
+
+    entity = FortiGateVDOMNameSensor(coordinator, "FGT123", "root")
+
+    assert entity.available
+    assert entity.name == "VDOM root"
+    assert entity.native_value == "root"
+    assert entity.unique_id == "FGT123_vdom_root_name"
+    assert entity.device_info["identifiers"] == {("fortios_kd", "FGT123")}
+    assert entity.extra_state_attributes == {"management_vdom": True}
+
+    coordinator.vdom_names = {"Tunnels"}
+
+    assert not entity.available
+
+
+def test_vdom_resource_sensors_live_on_vdom_device() -> None:
+    """Test VDOM resource sensors expose numerical usage on the VDOM device."""
+    from custom_components.fortios_kd.sensor import (  # noqa: PLC0415
+        create_vdom_resource_entities,
+    )
+
+    resources = {
+        "cpu": 12,
+        "memory": 51,
+        "session": {"current_usage": 1454, "usage_percent": 3},
+    }
+    coordinator = Mock()
+    coordinator.last_update_success = True
+    coordinator.vdom_resource_data_available = True
+    coordinator.get_vdom_resources.return_value = resources
+
+    entities = create_vdom_resource_entities(
+        coordinator,
+        "FGT123",
+        "TestGate",
+        "root",
+    )
+
+    assert {entity.name: entity.native_value for entity in entities} == {
+        "CPU usage": 12,
+        "Memory usage": 51,
+        "Sessions": 1454,
+        "Session usage": 3,
+    }
+    assert {entity.name: entity.native_unit_of_measurement for entity in entities} == {
+        "CPU usage": "%",
+        "Memory usage": "%",
+        "Sessions": "sessions",
+        "Session usage": "%",
+    }
+    assert all(entity.available for entity in entities)
+    assert entities[0].unique_id == "FGT123_vdom_root_cpu"
+    assert entities[0].device_info["identifiers"] == {
+        ("fortios_kd", "FGT123_vdom_root")
+    }
+    assert entities[0].device_info["via_device"] == ("fortios_kd", "FGT123")
+    assert entities[0].extra_state_attributes == {
+        "fortios_kd_metric": "cpu",
+        "fortios_kd_scope": "vdom",
+        "fortios_kd_vdom": "root",
+    }
+
+    coordinator.vdom_resource_data_available = False
+
+    assert not entities[0].available
+
+
 def test_ap_network_entities_expose_dashboard_matching_metadata() -> None:
     """Test AP management IP and board MAC entities can enrich ARP rows."""
     from custom_components.fortios_kd.sensor import (  # noqa: PLC0415

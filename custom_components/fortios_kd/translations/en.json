@@ -85,5 +85,26 @@
         "title": "Configure label organization"
       }
     }
+  },
+  "issues": {
+    "snmp_arp_required": {
+      "title": "SNMP settings required for {name}",
+      "fix_flow": {
+        "error": {
+          "snmp_cannot_connect": "Unable to read the FortiOS 6.2 ARP table over SNMPv2c. Check the community, port, allowed manager hosts, and that the SNMP configuration was applied.",
+          "snmp_community_required": "Enter the SNMPv2c community configured on this FortiGate."
+        },
+        "step": {
+          "init": {
+            "title": "Configure FortiOS 6.2 ARP access",
+            "description": "FortiOS KD detected {version} on **{name}**. FortiOS 6.2 does not provide the REST ARP endpoint, and the saved SNMPv2c settings are missing or could not read the ARP table. Other FortiOS KD data will continue updating, but ARP synchronization is unavailable until this is fixed.\n\nEnter the read-only SNMPv2c settings below. They are validated before being saved. SNMPv2c is unencrypted; restrict the community's allowed manager hosts to your Home Assistant system.",
+            "data": {
+              "snmp_community": "SNMPv2c community",
+              "snmp_port": "SNMP port"
+            }
+          }
+        }
+      }
+    }
   }
 }

@@ -3,6 +3,40 @@
 Notable changes and deliberate compatibility, security, and privacy decisions
 are recorded here for each release.
 
+## Unreleased
+
+### Added
+
+- Discover all configured FortiGate VDOMs and represent each as a separate
+  connected device associated with its FortiGate, with a Management VDOM
+  diagnostic indicating the VDOM selected by the global FortiOS configuration.
+  This uses Home Assistant's established device relationship so installations
+  still running Home Assistant 2025.12 remain supported; it does not use the
+  newer child-device API. Also expose one diagnostic VDOM-name sensor per
+  configured VDOM directly on the FortiGate device so the inventory remains
+  visible when its connected-device list contains many ARP, DHCP, wifi-client,
+  or FortiAP devices.
+- Add per-VDOM CPU usage, memory usage, active session count, and session usage
+  percentage sensors from `/monitor/system/vdom-resource?vdom=*`. Resource
+  collection is isolated so an unavailable endpoint does not interrupt the
+  integration's primary wifi polling.
+- Add a **KD VDOM Resources** community dashboard strategy with 24-hour graphs,
+  cascading Firewall and VDOM filters, and a layout selector that can combine
+  all matching VDOMs into one graph per resource or show separate cards grouped
+  by VDOM.
+
+### Changed
+
+- Refresh the detected FortiOS version from every normal API response. Firmware
+  upgrades are reflected by the firmware entity immediately, and ARP collection
+  switches between the FortiOS 6.4+ REST API and the configured FortiOS 6.2
+  SNMPv2c fallback without waiting for an integration reload.
+- Retain previously configured SNMPv2c ARP settings while ARP synchronization
+  remains enabled, allowing a runtime downgrade from FortiOS 6.4+ to 6.2 to
+  switch back to SNMP immediately. If the settings are missing or fail, create
+  a fixable Home Assistant Repair that validates replacement settings without
+  exposing the community value in the issue or logs.
+
 ## 0.5.0 - 2026-09-18
 
 ### Added

@@ -11,10 +11,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import FortiOSApi
+from .api.version import version_family
 from .const import RADIO_SPECTRUM_BANDS, RADIO_TYPE_BANDS
+from .repairs import async_create_snmp_arp_issue, async_delete_snmp_arp_issue
 from .snmp_arp import FortiOSKDSnmpArpClient, SnmpArpError
 
 _LOGGER = logging.getLogger(__name__)
+_VDOM_REFRESH_INTERVAL_SECONDS = 300
 
 
 def normalize_mac_address(value: Any) -> str | None:
@@ -35,6 +38,54 @@ def normalize_mac_address(value: Any) -> str | None:
     return ":".join(compact[index : index + 2] for index in range(0, 12, 2))
 
 
+def _vdom_results(response: dict[str, Any] | list[Any]) -> list[dict[str, Any]] | None:
+    """Normalize FortiOS object and multi-VDOM list response shapes."""
+    if isinstance(response, dict):
+        results = response.get("results")
+        if not isinstance(results, list):
+            return None
+        return [item for item in results if isinstance(item, dict)]
+
+    results: list[dict[str, Any]] = []
+    for item in response:
+        if not isinstance(item, dict):
+            continue
+
+        response_vdom = item.get("vdom")
+        if isinstance(response_vdom, str) and response_vdom:
+            results.append({"name": response_vdom})
+            continue
+
+        nested_results = item.get("results")
+        if isinstance(nested_results, list):
+            results.extend(
+                result for result in nested_results if isinstance(result, dict)
+            )
+        elif isinstance(item.get("name"), str):
+            results.append(item)
+
+    return results
+
+
+def _vdom_resource_results(
+    response: dict[str, Any] | list[Any],
+) -> dict[str, dict[str, Any]] | None:
+    """Normalize FortiOS single- and multi-VDOM resource responses."""
+    envelopes = [response] if isinstance(response, dict) else response
+    results: dict[str, dict[str, Any]] = {}
+
+    for envelope in envelopes:
+        if not isinstance(envelope, dict):
+            continue
+
+        vdom_name = envelope.get("vdom")
+        resource_data = envelope.get("results")
+        if isinstance(vdom_name, str) and vdom_name and isinstance(resource_data, dict):
+            results[vdom_name] = resource_data
+
+    return results or None
+
+
 class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Poll FortiGate and distribute the latest AP data."""
 
@@ -43,6 +94,7 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         hass: HomeAssistant,
         client: FortiOSApi,
         *,
+        config_entry_id: str | None = None,
         include_unassigned_ssids: bool = False,
         sync_arp_table: bool = False,
         match_arp_wifi_clients: bool = True,
@@ -58,6 +110,7 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             always_update=False,
         )
         self.client = client
+        self._config_entry_id = config_entry_id
         self.include_unassigned_ssids = include_unassigned_ssids
         self.sync_arp_table = sync_arp_table
         self.match_arp_wifi_clients = match_arp_wifi_clients
@@ -81,6 +134,16 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._arp_error_logged = False
         self._dhcp_leases: dict[str, Any] = {"results": [], "available": False}
         self._dhcp_error_logged = False
+        self._vdoms: dict[str, Any] = {"results": [], "available": False}
+        self._vdom_resources: dict[str, Any] = {
+            "results": {},
+            "available": False,
+        }
+        self._management_vdom: str | None = None
+        self._vdom_list_error_logged = False
+        self._vdom_global_error_logged = False
+        self._vdom_resource_error_logged = False
+        self._vdom_inventory_updated_at: float | None = None
         self._wifi_meta_loaded = False
         self.wifi_meta: dict[str, Any] = {}
         self.radio_type_bands = RADIO_TYPE_BANDS.copy()
@@ -139,9 +202,175 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return whether a valid DHCP response has been received."""
         return bool(self._dhcp_leases.get("available"))
 
+    @property
+    def vdom_names(self) -> set[str]:
+        """Return the configured VDOM names from the latest valid response."""
+        return {
+            name
+            for item in self._vdoms.get("results", [])
+            if isinstance(item, dict)
+            and isinstance(name := item.get("name"), str)
+            and name
+        }
+
+    @property
+    def management_vdom(self) -> str | None:
+        """Return the VDOM selected for FortiGate management."""
+        return self._management_vdom
+
+    @property
+    def vdom_data_available(self) -> bool:
+        """Return whether valid VDOM inventory has been received."""
+        return bool(self._vdoms.get("available"))
+
+    @property
+    def vdom_resource_data_available(self) -> bool:
+        """Return whether a valid VDOM resource response was received."""
+        return bool(self._vdom_resources.get("available"))
+
+    def get_vdom_resources(self, vdom_name: str) -> dict[str, Any] | None:
+        """Return current resource utilization for one VDOM."""
+        results = self._vdom_resources.get("results")
+        if not isinstance(results, dict):
+            return None
+
+        resource_data = results.get(vdom_name)
+        return resource_data if isinstance(resource_data, dict) else None
+
+    async def _async_get_vdom_inventory(self) -> dict[str, Any]:
+        """Return VDOM inventory while retaining the last valid configuration."""
+        if (
+            self._vdom_inventory_updated_at is not None
+            and monotonic() - self._vdom_inventory_updated_at
+            < _VDOM_REFRESH_INTERVAL_SECONDS
+        ):
+            return {
+                **self._vdoms,
+                "management_vdom": self._management_vdom,
+            }
+
+        vdom_list_valid = False
+        try:
+            vdom_response = await self.client.configuration.system.get_vdoms()
+        except (ClientError, TimeoutError, TypeError) as err:
+            if not self._vdom_list_error_logged:
+                _LOGGER.warning("Unable to load FortiGate VDOM list: %s", err)
+                self._vdom_list_error_logged = True
+        else:
+            vdom_results = _vdom_results(vdom_response)
+            if vdom_results is not None:
+                response_metadata = (
+                    vdom_response if isinstance(vdom_response, dict) else {}
+                )
+                self._vdoms = {
+                    **response_metadata,
+                    "results": [
+                        item
+                        for item in vdom_results
+                        if isinstance(item, dict)
+                        and isinstance(item.get("name"), str)
+                        and item["name"]
+                    ],
+                    "available": True,
+                }
+                self._vdom_list_error_logged = False
+                vdom_list_valid = True
+            elif not self._vdom_list_error_logged:
+                _LOGGER.warning("FortiGate VDOM response has no results list")
+                self._vdom_list_error_logged = True
+
+        management_vdom_valid = False
+        try:
+            global_response = (
+                await self.client.configuration.system.get_vdom_global_settings()
+            )
+        except (ClientError, TimeoutError, TypeError) as err:
+            if not self._vdom_global_error_logged:
+                _LOGGER.warning(
+                    "Unable to load FortiGate management VDOM setting: %s",
+                    err,
+                )
+                self._vdom_global_error_logged = True
+        else:
+            global_results = global_response.get("results")
+            management_vdom = (
+                global_results.get("management-vdom")
+                if isinstance(global_results, dict)
+                else None
+            )
+            if isinstance(management_vdom, str) and management_vdom:
+                self._management_vdom = management_vdom
+                self._vdom_global_error_logged = False
+                management_vdom_valid = True
+            elif not self._vdom_global_error_logged:
+                _LOGGER.warning(
+                    "FortiGate global configuration response has no management VDOM"
+                )
+                self._vdom_global_error_logged = True
+
+        if vdom_list_valid and management_vdom_valid:
+            self._vdom_inventory_updated_at = monotonic()
+
+        return {
+            **self._vdoms,
+            "management_vdom": self._management_vdom,
+        }
+
+    async def _async_get_vdom_resources(self) -> dict[str, Any]:
+        """Return VDOM resource usage without blocking primary wifi updates."""
+        try:
+            response = await self.client.monitor.system.get_vdom_resources()
+        except (ClientError, TimeoutError, TypeError) as err:
+            self._vdom_resources = {
+                **self._vdom_resources,
+                "available": False,
+            }
+            if not self._vdom_resource_error_logged:
+                _LOGGER.warning("Unable to load FortiGate VDOM resources: %s", err)
+                self._vdom_resource_error_logged = True
+            return self._vdom_resources
+
+        resource_results = _vdom_resource_results(response)
+        if resource_results is None:
+            self._vdom_resources = {
+                **self._vdom_resources,
+                "available": False,
+            }
+            if not self._vdom_resource_error_logged:
+                _LOGGER.warning(
+                    "FortiGate VDOM resource response has no per-VDOM results"
+                )
+                self._vdom_resource_error_logged = True
+            return self._vdom_resources
+
+        self._vdom_resource_error_logged = False
+        self._vdom_resources = {
+            "results": resource_results,
+            "available": True,
+        }
+        return self._vdom_resources
+
     async def _async_get_arp_table(self) -> dict[str, Any]:
         """Return the ARP table, retaining the last table after request errors."""
+        requires_snmp = bool(
+            self.sync_arp_table
+            and self.client.version is not None
+            and version_family(self.client.version, "6.2")
+        )
+        if not requires_snmp and self._config_entry_id is not None:
+            async_delete_snmp_arp_issue(self.hass, self._config_entry_id)
+        self._arp_supported = bool(
+            self.sync_arp_table
+            and (self.client.supports_network_arp or self._snmp_arp_client is not None)
+        )
         if not self._arp_supported:
+            self._arp_table = {"results": [], "supported": False}
+            if requires_snmp and self._config_entry_id is not None:
+                async_create_snmp_arp_issue(
+                    self.hass,
+                    self._config_entry_id,
+                    self.client.version_text,
+                )
             return self._arp_table
 
         try:
@@ -152,6 +381,12 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             else:
                 return self._arp_table
         except (ClientError, SnmpArpError, TimeoutError) as err:
+            if requires_snmp and self._config_entry_id is not None:
+                async_create_snmp_arp_issue(
+                    self.hass,
+                    self._config_entry_id,
+                    self.client.version_text,
+                )
             if not self._arp_error_logged:
                 _LOGGER.warning(
                     "Unable to load the FortiGate ARP table using %s: %s",
@@ -169,6 +404,8 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return self._arp_table
 
         self._arp_error_logged = False
+        if self._config_entry_id is not None:
+            async_delete_snmp_arp_issue(self.hass, self._config_entry_id)
         self._arp_table = {**response, "results": results, "supported": True}
         return self._arp_table
 
@@ -487,6 +724,8 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             wifi_clients = await self.client.monitor.wifi.get_clients()
             arp_table = await self._async_get_arp_table()
             dhcp_leases = await self._async_get_dhcp_leases()
+            vdoms = await self._async_get_vdom_inventory()
+            vdom_resources = await self._async_get_vdom_resources()
             configured_vaps = await self.client.configuration.wifi.get_vaps()
 
             data["wifi_clients"] = wifi_clients
@@ -506,6 +745,8 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._index_arp_entries(arp_table)
             data["dhcp_leases"] = dhcp_leases
             self._index_dhcp_entries(dhcp_leases)
+            data["vdoms"] = vdoms
+            data["vdom_resources"] = vdom_resources
             data["configured_vaps"] = configured_vaps
             if not self.include_unassigned_ssids:
                 data[

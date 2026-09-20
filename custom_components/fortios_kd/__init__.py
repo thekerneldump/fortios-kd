@@ -14,11 +14,11 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
 from .api import FortiOSApi
-from .api.version import version_family
 from .const import (
     CONF_INCLUDE_UNASSIGNED_SSIDS,
     CONF_MASK_AP_NAMES,
@@ -47,11 +47,12 @@ from .coordinator import FortiOSKDCoordinator
 from .filter_manager import FortiOSKDFilterManager
 from .frontend import async_register_dashboard_strategy
 from .organization import FortiOSKDOrganizationManager
-from .privacy import mask_name
+from .privacy import mask_name, mask_serial
+from .repairs import async_delete_snmp_arp_issue
 from .snmp_arp import FortiOSKDSnmpArpClient
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS = [Platform.SENSOR, Platform.SELECT]
+PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.SELECT]
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -92,11 +93,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         DEFAULT_SYNC_DHCP_LEASES,
     )
     snmp_arp_client = None
-    if (
-        sync_arp_table
-        and client.version is not None
-        and version_family(client.version, "6.2")
-    ):
+    if sync_arp_table:
         community = entry.data.get(CONF_SNMP_COMMUNITY)
         if isinstance(community, str) and community:
             snmp_arp_client = FortiOSKDSnmpArpClient(
@@ -106,14 +103,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 int(entry.data.get(CONF_SNMP_PORT, DEFAULT_SNMP_PORT)),
                 DEFAULT_SNMP_TIMEOUT,
             )
-        else:
-            _LOGGER.warning(
-                "ARP synchronization on FortiOS 6.2 requires SNMPv2c settings; "
-                "reconfigure this FortiGate to provide them"
-            )
     coordinator = FortiOSKDCoordinator(
         hass,
         client,
+        config_entry_id=entry.entry_id,
         include_unassigned_ssids=include_unassigned_ssids,
         sync_arp_table=sync_arp_table,
         match_arp_wifi_clients=match_arp_wifi_clients,
@@ -135,20 +128,38 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinator,
         str(status.get("serial") or entry.unique_id or entry.entry_id),
     )
+    fortigate_hostname = status.get("results", {}).get("hostname") or entry.title
+    mask_serial_numbers = entry.data.get(
+        CONF_MASK_SERIAL_NUMBERS,
+        DEFAULT_MASK_SERIAL_NUMBERS,
+    )
+    fortigate_serial = str(status["serial"])
+    displayed_fortigate_hostname = (
+        mask_name(fortigate_hostname)
+        if mask_serial_numbers
+        else fortigate_hostname
+    )
+    fortigate_device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, fortigate_serial)},
+        name=displayed_fortigate_hostname,
+        manufacturer="Fortinet",
+        model=status["results"].get("model"),
+        serial_number=mask_serial(fortigate_serial)
+        if mask_serial_numbers
+        else fortigate_serial,
+        sw_version=status["version"],
+    )
     domain_data[entry.entry_id] = {
         "client": client,
         "status": status,
         "coordinator": coordinator,
+        "fortigate_device_id": fortigate_device.id,
+        "fortigate_display_name": displayed_fortigate_hostname,
         "organization_manager": organization_manager,
     }
     organization_manager.setup()
 
-    fortigate_hostname = status.get("results", {}).get("hostname") or entry.title
-    displayed_fortigate_hostname = (
-        mask_name(fortigate_hostname)
-        if entry.data.get(CONF_MASK_SERIAL_NUMBERS, DEFAULT_MASK_SERIAL_NUMBERS)
-        else fortigate_hostname
-    )
     manager.register_hub(
         entry.entry_id,
         displayed_fortigate_hostname,
@@ -169,6 +180,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
     if unloaded:
+        async_delete_snmp_arp_issue(hass, entry.entry_id)
         domain_data = hass.data[DOMAIN]
         manager: FortiOSKDFilterManager = domain_data[DATA_FILTER_MANAGER]
         manager.unregister_hub(entry.entry_id)
