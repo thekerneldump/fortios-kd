@@ -21,6 +21,7 @@ const RESOURCE_GRAPHS = [
   { metric: "memory", title: "Memory usage" },
   { metric: "session_current_usage", title: "Sessions" },
   { metric: "session_usage_percent", title: "Session Usage Percent" },
+  { metric: "dns_latency", title: "DNS Latency" },
 ];
 const RESOURCE_GRAPH_BY_METRIC = new Map(
   RESOURCE_GRAPHS.map((graph) => [graph.metric, graph]),
@@ -96,7 +97,7 @@ if (
     strategyType: "dashboard",
     name: "FortiOS KD VDOM Resources",
     description:
-      "Graph FortiGate CPU, memory, and session utilization by virtual domain.",
+      "Graph FortiGate CPU, memory, sessions, and DNS latency by virtual domain.",
     documentationURL:
       "https://github.com/thekerneldump/fortios-kd#community-dashboards",
   });
@@ -181,18 +182,25 @@ function vdomResourceModel(hass) {
   const signatureParts = [selectedFortigate, selectedVdom, graphLayout];
 
   for (const state of Object.values(hass.states)) {
-    if (state.attributes.fortios_kd_scope !== "vdom") {
-      continue;
-    }
-
     const metric = state.attributes.fortios_kd_metric;
     const graph = RESOURCE_GRAPH_BY_METRIC.get(metric);
     if (!graph) {
       continue;
     }
 
+    const scope = state.attributes.fortios_kd_scope;
     const entity = registryEntry(hass.entities, state.entity_id);
-    const vdomDevice = registryEntry(hass.devices, entity?.device_id);
+    const entityDevice = registryEntry(hass.devices, entity?.device_id);
+    const isVdomResource = scope === "vdom";
+    const isDnsLatency =
+      scope === "dns_server" && metric === "dns_latency";
+    if (!isVdomResource && !isDnsLatency) {
+      continue;
+    }
+
+    const vdomDevice = isDnsLatency
+      ? registryEntry(hass.devices, entityDevice?.via_device_id)
+      : entityDevice;
     const fortigateDevice = registryEntry(
       hass.devices,
       vdomDevice?.via_device_id,
@@ -203,7 +211,15 @@ function vdomResourceModel(hass) {
       "FortiGate",
     );
     const vdomName = state.attributes.fortios_kd_vdom;
-    if (!entity?.device_id || typeof vdomName !== "string" || !vdomName) {
+    const dnsIp = isDnsLatency
+      ? state.attributes.fortios_kd_dns_ip
+      : undefined;
+    if (
+      !vdomDevice?.id ||
+      typeof vdomName !== "string" ||
+      !vdomName ||
+      (isDnsLatency && (typeof dnsIp !== "string" || !dnsIp))
+    ) {
       continue;
     }
 
@@ -213,6 +229,7 @@ function vdomResourceModel(hass) {
       metric,
       fortigateName,
       vdomName,
+      dnsIp || "",
     );
 
     if (
@@ -223,7 +240,8 @@ function vdomResourceModel(hass) {
     }
 
     matchingEntities.push({
-      deviceId: entity.device_id,
+      deviceId: vdomDevice.id,
+      dnsIp,
       entityId: state.entity_id,
       fortigateName,
       metric,
@@ -237,6 +255,9 @@ function vdomResourceModel(hass) {
         sensitivity: "base",
       }) ||
       left.vdomName.localeCompare(right.vdomName, undefined, {
+        sensitivity: "base",
+      }) ||
+      (left.dnsIp || "").localeCompare(right.dnsIp || "", undefined, {
         sensitivity: "base",
       }),
   );
@@ -255,20 +276,29 @@ function vdomResourceModel(hass) {
         };
         groupsByDevice.set(item.deviceId, group);
       }
-      group.entitiesByMetric.set(item.metric, item.entityId);
+      const metricEntities = group.entitiesByMetric.get(item.metric) || [];
+      metricEntities.push(item);
+      group.entitiesByMetric.set(item.metric, metricEntities);
     }
 
     groups = [...groupsByDevice.values()].map((group) => ({
       ...group,
       cardConfigs: RESOURCE_GRAPHS.flatMap((graph) => {
-        const entityId = group.entitiesByMetric.get(graph.metric);
-        return entityId
+        const items = group.entitiesByMetric.get(graph.metric) || [];
+        return items.length
           ? [
               {
                 type: "history-graph",
                 title: graph.title,
                 hours_to_show: 24,
-                entities: [{ entity: entityId, name: group.title }],
+                expand_legend: graph.metric === "dns_latency",
+                entities: items.map((item) => ({
+                  entity: item.entityId,
+                  name:
+                    graph.metric === "dns_latency"
+                      ? item.dnsIp
+                      : group.title,
+                })),
               },
             ]
           : [];
@@ -289,7 +319,12 @@ function vdomResourceModel(hass) {
                 .filter((item) => item.metric === graph.metric)
                 .map((item) => ({
                   entity: item.entityId,
-                  name: `${item.fortigateName} · ${item.vdomName}`,
+                  name:
+                    graph.metric === "dns_latency"
+                      ? selectedFortigate === FILTER_ALL
+                        ? `${item.fortigateName} - ${item.dnsIp}`
+                        : item.dnsIp
+                      : `${item.fortigateName} · ${item.vdomName}`,
                 }));
               return entities.length
                 ? [

@@ -108,6 +108,16 @@ def _dashboard_match_id(fortigate_serial: str, mac: str) -> str:
     return sha256(identity.encode()).hexdigest()
 
 
+def _dns_server_identifier(
+    fortigate_serial: str,
+    vdom_name: str,
+    ip_address: str,
+) -> str:
+    """Return a stable device identifier for a VDOM-scoped DNS server."""
+    identity = f"{DOMAIN}\0{fortigate_serial}\0{vdom_name}\0{ip_address}"
+    return f"{fortigate_serial}_dns_{sha256(identity.encode()).hexdigest()}"
+
+
 def _dhcp_assignment_type(entries: Iterable[dict[str, Any]]) -> str:
     """Describe whether DHCP entries are dynamic or reserved."""
     return (
@@ -284,6 +294,7 @@ async def async_setup_entry(
     )
     known_dhcp_macs = current_dhcp_macs | registered_dhcp_macs
     dhcp_records = sorted(known_dhcp_macs)
+    known_dns_server_keys = set(coordinator.dns_server_keys)
 
     async_add_entities(
         [
@@ -309,6 +320,26 @@ async def async_setup_entry(
                     fortigate_serial,
                     displayed_fortigate_hostname,
                     vdom_name,
+                )
+            ),
+            *(
+                FortiGateVDOMDNSServersSensor(
+                    coordinator,
+                    fortigate_serial,
+                    displayed_fortigate_hostname,
+                    vdom_name,
+                )
+                for vdom_name in sorted(known_vdoms)
+            ),
+            *(
+                entity
+                for vdom_name, ip_address in sorted(known_dns_server_keys)
+                for entity in create_dns_server_entities(
+                    coordinator,
+                    fortigate_serial,
+                    displayed_fortigate_hostname,
+                    vdom_name,
+                    ip_address,
                 )
             ),
             *(
@@ -712,10 +743,37 @@ async def async_setup_entry(
                     displayed_fortigate_hostname,
                     vdom_name,
                 ),
+                FortiGateVDOMDNSServersSensor(
+                    coordinator,
+                    fortigate_serial,
+                    displayed_fortigate_hostname,
+                    vdom_name,
+                ),
             )
         )
 
     entry.async_on_unload(coordinator.async_add_listener(_add_new_vdom_sensors))
+
+    def _add_new_dns_servers() -> None:
+        new_entities: list[SensorEntity] = []
+        new_server_keys = coordinator.dns_server_keys - known_dns_server_keys
+
+        for vdom_name, ip_address in sorted(new_server_keys):
+            known_dns_server_keys.add((vdom_name, ip_address))
+            new_entities.extend(
+                create_dns_server_entities(
+                    coordinator,
+                    fortigate_serial,
+                    displayed_fortigate_hostname,
+                    vdom_name,
+                    ip_address,
+                )
+            )
+
+        if new_entities:
+            async_add_entities(new_entities)
+
+    entry.async_on_unload(coordinator.async_add_listener(_add_new_dns_servers))
 
     def _add_new_wifi_clients() -> None:
         new_entities: list[SensorEntity] = []
@@ -1047,6 +1105,70 @@ def create_vdom_resource_entities(
     ]
 
 
+class FortiGateVDOMDNSServersSensor(
+    CoordinatorEntity[FortiOSKDCoordinator],
+    SensorEntity,
+):
+    """List the DNS-server devices associated with one VDOM."""
+
+    _attr_has_entity_name = True
+    _attr_name = "DNS servers"
+    _attr_icon = "mdi:dns"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: FortiOSKDCoordinator,
+        fortigate_serial: str,
+        fortigate_name: str,
+        vdom_name: str,
+    ) -> None:
+        """Initialize a VDOM DNS-server summary sensor."""
+        super().__init__(coordinator)
+        self._vdom_name = vdom_name
+        vdom_identifier = f"{fortigate_serial}_vdom_{vdom_name}"
+        self._attr_unique_id = f"{vdom_identifier}_dns_servers"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, vdom_identifier)},
+            name=f"VDOM {vdom_name} ({fortigate_name})",
+            manufacturer="Fortinet",
+            model="FortiOS Virtual Domain",
+            via_device=(DOMAIN, fortigate_serial),
+        )
+
+    def _servers(self) -> list[dict[str, Any]]:
+        """Return this VDOM's current DNS servers."""
+        return self.coordinator.get_vdom_dns_servers(self._vdom_name)
+
+    @property
+    def available(self) -> bool:
+        """Return whether current DNS data exists for this VDOM."""
+        return (
+            super().available
+            and self.coordinator.dns_data_available
+            and bool(self._servers())
+        )
+
+    @property
+    def native_value(self) -> str | None:
+        """Return a readable list of DNS server addresses."""
+        addresses = [
+            str(server["ip"])
+            for server in self._servers()
+            if isinstance(server.get("ip"), str) and server["ip"]
+        ]
+        return ", ".join(addresses) or None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return VDOM linkage metadata and DNS-server count."""
+        return {
+            "fortios_kd_entry_type": "vdom_dns_servers",
+            "fortios_kd_vdom": self._vdom_name,
+            "dns_server_count": len(self._servers()),
+        }
+
+
 class FortiGateAPSerialSensor(SensorEntity):
     _attr_has_entity_name = True
     _attr_name = "Serial number"
@@ -1241,6 +1363,173 @@ class FortiGateChangedCoordinatorSensor(
 
         self._last_coordinator_state = current_state
         self.async_write_ha_state()
+
+
+class FortiGateDNSServerMetric(FortiGateChangedCoordinatorSensor):
+    """Represent one field from a VDOM-scoped DNS server device."""
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: FortiOSKDCoordinator,
+        fortigate_serial: str,
+        fortigate_name: str,
+        vdom_name: str,
+        ip_address: str,
+        field: str,
+        name: str,
+        icon: str,
+        *,
+        unit: str | None = None,
+        device_class: SensorDeviceClass | None = None,
+        state_class: SensorStateClass | None = None,
+    ) -> None:
+        """Initialize a DNS-server diagnostic entity."""
+        super().__init__(coordinator)
+        self._vdom_name = vdom_name
+        self._ip_address = ip_address
+        self._field = field
+        dns_identifier = _dns_server_identifier(
+            fortigate_serial,
+            vdom_name,
+            ip_address,
+        )
+        vdom_identifier = f"{fortigate_serial}_vdom_{vdom_name}"
+
+        self._attr_unique_id = f"{dns_identifier}_{field}"
+        self._attr_name = name
+        self._attr_icon = icon
+        self._attr_native_unit_of_measurement = unit
+        self._attr_device_class = device_class
+        self._attr_state_class = state_class
+        if field == "latency":
+            self._attr_suggested_display_precision = 0
+        extra_state_attributes = {
+            "fortios_kd_entry_type": "dns_server",
+            "fortios_kd_dns_field": field,
+            "fortios_kd_vdom": vdom_name,
+            "fortios_kd_dns_ip": ip_address,
+        }
+        if field == "latency":
+            extra_state_attributes.update(
+                {
+                    "fortios_kd_metric": "dns_latency",
+                    "fortios_kd_scope": "dns_server",
+                }
+            )
+        self._attr_extra_state_attributes = extra_state_attributes
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, dns_identifier)},
+            name=f"DNS {ip_address} ({vdom_name}, {fortigate_name})",
+            model="DNS Server",
+            via_device=(DOMAIN, vdom_identifier),
+        )
+
+    def _record(self) -> dict[str, Any] | None:
+        """Return the current VDOM-scoped DNS server record."""
+        return self.coordinator.get_dns_server(
+            self._vdom_name,
+            self._ip_address,
+        )
+
+    @property
+    def available(self) -> bool:
+        """Return whether the selected DNS value is current and present."""
+        record = self._record()
+        if not super().available or record is None:
+            return False
+
+        if self._field in {"latency", "last_tested"}:
+            return (
+                bool(record.get("latency_available")) and self.native_value is not None
+            )
+        if self._field == "roles":
+            return (
+                bool(record.get("configuration_available"))
+                and bool(record.get("configured"))
+                and self.native_value is not None
+            )
+        if self._field == "configuration_source":
+            source_is_current = (
+                record.get("configuration_available")
+                if record.get("configured")
+                else record.get("latency_available")
+            )
+            return bool(source_is_current) and self.native_value is not None
+
+        return bool(
+            record.get("configuration_available") or record.get("latency_available")
+        )
+
+    @property
+    def native_value(self) -> Any:
+        """Return the requested DNS server field."""
+        record = self._record()
+        if record is None:
+            return None
+        if self._field == "roles":
+            roles = record.get("roles")
+            if not isinstance(roles, list):
+                return None
+            return ", ".join(str(role) for role in roles) or None
+        return record.get(self._field)
+
+
+def create_dns_server_entities(
+    coordinator: FortiOSKDCoordinator,
+    fortigate_serial: str,
+    fortigate_name: str,
+    vdom_name: str,
+    ip_address: str,
+) -> list[FortiGateDNSServerMetric]:
+    """Create diagnostic entities for one VDOM-scoped DNS server."""
+    definitions = (
+        ("ip", "IP address", "mdi:ip", None, None, None),
+        ("vdom", "VDOM", "mdi:server-network", None, None, None),
+        (
+            "configuration_source",
+            "Configuration source",
+            "mdi:source-branch",
+            None,
+            None,
+            None,
+        ),
+        ("roles", "Configured role", "mdi:format-list-bulleted", None, None, None),
+        (
+            "latency",
+            "Latency",
+            "mdi:timer-outline",
+            UnitOfTime.MILLISECONDS,
+            SensorDeviceClass.DURATION,
+            SensorStateClass.MEASUREMENT,
+        ),
+        (
+            "last_tested",
+            "Last tested",
+            "mdi:clock-check-outline",
+            None,
+            SensorDeviceClass.TIMESTAMP,
+            None,
+        ),
+    )
+    return [
+        FortiGateDNSServerMetric(
+            coordinator,
+            fortigate_serial,
+            fortigate_name,
+            vdom_name,
+            ip_address,
+            field,
+            name,
+            icon,
+            unit=unit,
+            device_class=device_class,
+            state_class=state_class,
+        )
+        for field, name, icon, unit, device_class, state_class in definitions
+    ]
 
 
 class FortiGateAPClients(FortiGateChangedCoordinatorSensor):

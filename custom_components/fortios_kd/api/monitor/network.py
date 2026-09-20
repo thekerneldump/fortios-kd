@@ -21,3 +21,11 @@ class FortiOSNetworkApi:
     async def get_arp_table(self) -> dict[str, Any]:
         """Return the IPv4 ARP table."""
         return await self._http.get("monitor/network/arp")
+
+    async def get_dns_latency(self) -> dict[str, Any] | list[Any]:
+        """Return runtime DNS latency for every virtual domain."""
+        return await self._http.get(
+            "monitor/network/dns/latency",
+            params={"vdom": "*"},
+            allow_list=True,
+        )

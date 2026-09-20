@@ -1,5 +1,6 @@
 """Tests for the FortiOS-KD API."""
 
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
 from aiohttp import ClientConnectionError
@@ -65,6 +66,91 @@ def test_vdom_resource_response_shape_normalization() -> None:
         "root": root_resources
     }
     assert _vdom_resource_results({"results": []}) is None
+
+
+def test_dns_configuration_and_latency_normalization() -> None:
+    """Test effective DNS sources and last-test age conversion."""
+    from custom_components.fortios_kd.coordinator import (  # noqa: PLC0415
+        _configured_dns_servers,
+        _dns_latency_results,
+    )
+
+    configured = _configured_dns_servers(
+        {
+            "results": {
+                "primary": "203.0.113.53",
+                "secondary": "203.0.113.54",
+            }
+        },
+        [
+            {
+                "vdom": "lab",
+                "results": {
+                    "vdom-dns": "enable",
+                    "primary": "192.0.2.53",
+                    "secondary": "192.0.2.54",
+                },
+            },
+            {"vdom": "root", "results": {"vdom-dns": "disable"}},
+        ],
+        {"lab", "root"},
+        "root",
+    )
+
+    assert configured == {
+        ("lab", "192.0.2.53"): {
+            "vdom": "lab",
+            "ip": "192.0.2.53",
+            "configuration_source": "VDOM override",
+            "roles": ["Primary"],
+        },
+        ("lab", "192.0.2.54"): {
+            "vdom": "lab",
+            "ip": "192.0.2.54",
+            "configuration_source": "VDOM override",
+            "roles": ["Secondary"],
+        },
+        ("root", "203.0.113.53"): {
+            "vdom": "root",
+            "ip": "203.0.113.53",
+            "configuration_source": "Global",
+            "roles": ["Primary"],
+        },
+        ("root", "203.0.113.54"): {
+            "vdom": "root",
+            "ip": "203.0.113.54",
+            "configuration_source": "Global",
+            "roles": ["Secondary"],
+        },
+    }
+
+    observed_at = datetime(2026, 9, 19, 12, 0, tzinfo=UTC)
+    latency = _dns_latency_results(
+        {
+            "vdom": "root",
+            "results": [
+                {
+                    "service": "dns_server",
+                    "latency": 30,
+                    "last_update": 2410,
+                    "ip": "203.0.113.53",
+                }
+            ],
+        },
+        observed_at,
+    )
+
+    assert latency == {
+        ("root", "203.0.113.53"): {
+            "vdom": "root",
+            "ip": "203.0.113.53",
+            "service": "dns_server",
+            "latency": 30,
+            "last_tested": (observed_at - timedelta(milliseconds=2410)).replace(
+                microsecond=0
+            ),
+        }
+    }
 
 
 async def test_monitor_api(
@@ -155,6 +241,54 @@ async def test_monitor_api(
                 "memory": 51,
                 "session": {"current_usage": 1454, "usage_percent": 3},
             },
+        },
+    ]
+    global_dns = {
+        "results": {
+            "primary": "203.0.113.53",
+            "secondary": "203.0.113.54",
+        },
+        "vdom": "root",
+    }
+    vdom_dns = [
+        {
+            "vdom": "lab",
+            "results": {
+                "vdom-dns": "enable",
+                "primary": "192.0.2.53",
+                "secondary": "192.0.2.54",
+            },
+        },
+        {
+            "vdom": "root",
+            "results": {"vdom-dns": "disable"},
+        },
+    ]
+    dns_latency = [
+        {
+            "vdom": "lab",
+            "results": [
+                {
+                    "service": "dns_server",
+                    "latency": 8,
+                    "ip": "192.0.2.53",
+                }
+            ],
+        },
+        {
+            "vdom": "root",
+            "results": [
+                {
+                    "service": "dns_server",
+                    "latency": 30,
+                    "ip": "203.0.113.53",
+                },
+                {
+                    "service": "dns_server",
+                    "latency": 12,
+                    "ip": "198.51.100.53",
+                },
+            ],
         },
     ]
     wifi_meta = {
@@ -255,6 +389,18 @@ async def test_monitor_api(
         f"{BASE_URL}/monitor/system/vdom-resource?vdom=*",
         json=vdom_resources,
     )
+    aioclient_mock.get(
+        f"{BASE_URL}/cmdb/system/dns?vdom=root",
+        json=global_dns,
+    )
+    aioclient_mock.get(
+        f"{BASE_URL}/cmdb/system/vdom-dns?vdom=*",
+        json=vdom_dns,
+    )
+    aioclient_mock.get(
+        f"{BASE_URL}/monitor/network/dns/latency?vdom=*",
+        json=dns_latency,
+    )
 
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -322,6 +468,51 @@ async def test_monitor_api(
             "results": {item["vdom"]: item["results"] for item in vdom_resources},
             "available": True,
         },
+        "dns_servers": {
+            "results": [
+                {
+                    "vdom": "lab",
+                    "ip": "192.0.2.53",
+                    "configuration_available": True,
+                    "latency_available": True,
+                    "configured": True,
+                    "configuration_source": "VDOM override",
+                    "roles": ["Primary"],
+                    "service": "dns_server",
+                    "latency": 8,
+                },
+                {
+                    "vdom": "lab",
+                    "ip": "192.0.2.54",
+                    "configuration_available": True,
+                    "latency_available": False,
+                    "configured": True,
+                    "configuration_source": "VDOM override",
+                    "roles": ["Secondary"],
+                },
+                {
+                    "vdom": "root",
+                    "ip": "203.0.113.53",
+                    "configuration_available": True,
+                    "latency_available": True,
+                    "configured": True,
+                    "configuration_source": "Global",
+                    "roles": ["Primary"],
+                    "service": "dns_server",
+                    "latency": 30,
+                },
+                {
+                    "vdom": "root",
+                    "ip": "203.0.113.54",
+                    "configuration_available": True,
+                    "latency_available": False,
+                    "configured": True,
+                    "configuration_source": "Global",
+                    "roles": ["Secondary"],
+                },
+            ],
+            "available": True,
+        },
         "configured_vaps": configured_vaps,
         "configured_wtp_profiles": configured_wtp_profiles,
     }
@@ -349,6 +540,17 @@ async def test_monitor_api(
     assert coordinator.vdom_data_available
     assert coordinator.vdom_resource_data_available
     assert coordinator.get_vdom_resources("root") == vdom_resources[1]["results"]
+    assert coordinator.dns_server_keys == {
+        ("lab", "192.0.2.53"),
+        ("lab", "192.0.2.54"),
+        ("root", "203.0.113.53"),
+        ("root", "203.0.113.54"),
+    }
+    assert (
+        coordinator.get_dns_server("lab", "192.0.2.53")
+        == (coordinator.data["dns_servers"]["results"][0])
+    )
+    assert coordinator.dns_data_available
     assert coordinator.wifi_meta == wifi_meta["results"]
     assert coordinator.radio_type_bands["802.11n"] == "2.4 GHz"
     assert coordinator.radio_type_bands["future-5g-radio"] == "5 GHz"
@@ -385,12 +587,19 @@ async def test_wifi_meta_failure_uses_fallback(hass: HomeAssistant) -> None:
     client.monitor.system.get_vdom_resources = AsyncMock(
         return_value={"vdom": "root", "results": {}}
     )
+    client.monitor.network.get_dns_latency = AsyncMock(
+        return_value={"vdom": "root", "results": []}
+    )
     client.configuration.system.get_vdoms = AsyncMock(
         return_value={"results": [{"name": "root"}]}
     )
     client.configuration.system.get_vdom_global_settings = AsyncMock(
         return_value={"results": {"management-vdom": "root"}}
     )
+    client.configuration.system.get_global_dns = AsyncMock(
+        return_value={"vdom": "root", "results": {}}
+    )
+    client.configuration.system.get_vdom_dns = AsyncMock()
     client.configuration.wifi.get_vaps = AsyncMock(return_value={"results": []})
 
     coordinator = FortiOSKDCoordinator(
@@ -434,6 +643,9 @@ async def test_dhcp_failure_does_not_block_wifi_updates(hass: HomeAssistant) -> 
     client.monitor.system.get_vdom_resources = AsyncMock(
         return_value={"vdom": "root", "results": {}}
     )
+    client.monitor.network.get_dns_latency = AsyncMock(
+        return_value={"vdom": "root", "results": []}
+    )
     client.monitor.network.get_arp_table = AsyncMock()
     client.configuration.system.get_vdoms = AsyncMock(
         return_value={"results": [{"name": "root"}]}
@@ -441,6 +653,10 @@ async def test_dhcp_failure_does_not_block_wifi_updates(hass: HomeAssistant) -> 
     client.configuration.system.get_vdom_global_settings = AsyncMock(
         return_value={"results": {"management-vdom": "root"}}
     )
+    client.configuration.system.get_global_dns = AsyncMock(
+        return_value={"vdom": "root", "results": {}}
+    )
+    client.configuration.system.get_vdom_dns = AsyncMock()
     client.configuration.wifi.get_vaps = AsyncMock(return_value={"results": []})
 
     coordinator = FortiOSKDCoordinator(
@@ -538,6 +754,40 @@ async def test_vdom_resource_failure_isolated_and_marks_data_unavailable(
     assert not coordinator.vdom_resource_data_available
 
 
+async def test_dns_failures_are_isolated_and_mark_data_unavailable(
+    hass: HomeAssistant,
+) -> None:
+    """Test unsupported DNS endpoints do not raise from coordinator polling."""
+    integration = await async_get_integration(hass, DOMAIN)
+    await integration.async_get_component()
+
+    from custom_components.fortios_kd.coordinator import (  # noqa: PLC0415
+        FortiOSKDCoordinator,
+    )
+
+    client = Mock()
+    client.configuration.system.get_global_dns = AsyncMock(
+        side_effect=ClientConnectionError()
+    )
+    client.configuration.system.get_vdom_dns = AsyncMock()
+    client.monitor.network.get_dns_latency = AsyncMock(
+        side_effect=ClientConnectionError()
+    )
+    coordinator = FortiOSKDCoordinator(hass, client)
+    coordinator._vdoms = {  # noqa: SLF001
+        "results": [{"name": "root"}],
+        "available": True,
+    }
+    coordinator._management_vdom = "root"  # noqa: SLF001
+
+    dns_servers = await coordinator._async_get_dns_servers()  # noqa: SLF001
+
+    assert dns_servers == {"results": [], "available": False}
+    assert not coordinator.dns_data_available
+    assert coordinator.dns_server_keys == set()
+    client.configuration.system.get_vdom_dns.assert_not_awaited()
+
+
 async def test_fortios_62_uses_snmp_arp_fallback(hass: HomeAssistant) -> None:
     """Test FortiOS 6.2 ARP data is supplied by the configured SNMP client."""
     integration = await async_get_integration(hass, DOMAIN)
@@ -565,6 +815,9 @@ async def test_fortios_62_uses_snmp_arp_fallback(hass: HomeAssistant) -> None:
     client.monitor.system.get_vdom_resources = AsyncMock(
         return_value={"vdom": "root", "results": {}}
     )
+    client.monitor.network.get_dns_latency = AsyncMock(
+        return_value={"vdom": "root", "results": []}
+    )
     client.monitor.network.get_arp_table = AsyncMock()
     client.configuration.system.get_vdoms = AsyncMock(
         return_value={"results": [{"name": "root"}]}
@@ -572,6 +825,10 @@ async def test_fortios_62_uses_snmp_arp_fallback(hass: HomeAssistant) -> None:
     client.configuration.system.get_vdom_global_settings = AsyncMock(
         return_value={"results": {"management-vdom": "root"}}
     )
+    client.configuration.system.get_global_dns = AsyncMock(
+        return_value={"vdom": "root", "results": {}}
+    )
+    client.configuration.system.get_vdom_dns = AsyncMock()
     client.configuration.wifi.get_vaps = AsyncMock(return_value={"results": []})
     snmp_client = Mock()
     snmp_client.async_get_arp_table = AsyncMock(

@@ -10,6 +10,16 @@ are recorded here for each release.
 - Add an editable **Preferred name** configuration entity to each FortiGate.
   Bundled dashboards use it for FortiGate labels, graph legends, and firewall
   filters without renaming the underlying Home Assistant device.
+- Add VDOM-scoped DNS server devices from global DNS configuration and optional
+  per-VDOM overrides. Runtime DNS observations enrich configured devices with
+  latency and last-tested diagnostics but do not create unconfigured devices.
+  Each DNS device is linked through its VDOM using the Home Assistant
+  2025.12-compatible device relationship and provides IP address, VDOM,
+  configuration source, and configured role. VDOM devices also expose a DNS
+  server summary entity. Add configured DNS-server latency to the **KD VDOM
+  Resources** dashboard, with preferred FortiGate names in combined legends
+  and compact IP-only legends when filtered to one firewall or grouped into
+  separate VDOM cards.
 
 ## 0.6.0 - 2026-09-19
 

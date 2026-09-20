@@ -198,6 +198,88 @@ def test_vdom_resource_sensors_live_on_vdom_device() -> None:
     assert not entities[0].available
 
 
+def test_dns_server_entities_are_linked_through_vdom_device() -> None:
+    """Test DNS diagnostics and the HA 2025.12-compatible device relationship."""
+    from custom_components.fortios_kd.sensor import (  # noqa: PLC0415
+        FortiGateVDOMDNSServersSensor,
+        create_dns_server_entities,
+    )
+
+    last_tested = datetime(2026, 9, 19, 12, 0, tzinfo=UTC)
+    record = {
+        "vdom": "root",
+        "ip": "203.0.113.53",
+        "configuration_source": "Global",
+        "roles": ["Primary"],
+        "configured": True,
+        "configuration_available": True,
+        "latency_available": True,
+        "latency": 30,
+        "last_tested": last_tested,
+    }
+    coordinator = Mock()
+    coordinator.last_update_success = True
+    coordinator.dns_data_available = True
+    coordinator.get_dns_server.return_value = record
+    coordinator.get_vdom_dns_servers.return_value = [record]
+
+    entities = create_dns_server_entities(
+        coordinator,
+        "FGT123",
+        "TestGate",
+        "root",
+        "203.0.113.53",
+    )
+    values = {entity.name: entity.native_value for entity in entities}
+
+    assert values == {
+        "IP address": "203.0.113.53",
+        "VDOM": "root",
+        "Configuration source": "Global",
+        "Configured role": "Primary",
+        "Latency": 30,
+        "Last tested": last_tested,
+    }
+    assert all(entity.available for entity in entities)
+    assert entities[0].device_info["via_device"] == (
+        "fortios_kd",
+        "FGT123_vdom_root",
+    )
+    assert entities[0].device_info["model"] == "DNS Server"
+    assert entities[0].extra_state_attributes == {
+        "fortios_kd_entry_type": "dns_server",
+        "fortios_kd_dns_field": "ip",
+        "fortios_kd_vdom": "root",
+        "fortios_kd_dns_ip": "203.0.113.53",
+    }
+
+    summary = FortiGateVDOMDNSServersSensor(
+        coordinator,
+        "FGT123",
+        "TestGate",
+        "root",
+    )
+    assert summary.native_value == "203.0.113.53"
+    assert summary.device_info["identifiers"] == {("fortios_kd", "FGT123_vdom_root")}
+    assert summary.extra_state_attributes["dns_server_count"] == 1
+
+    record["latency_available"] = False
+    latency_entity = next(entity for entity in entities if entity.name == "Latency")
+    ip_entity = next(entity for entity in entities if entity.name == "IP address")
+
+    assert latency_entity.extra_state_attributes == {
+        "fortios_kd_entry_type": "dns_server",
+        "fortios_kd_dns_field": "latency",
+        "fortios_kd_vdom": "root",
+        "fortios_kd_dns_ip": "203.0.113.53",
+        "fortios_kd_metric": "dns_latency",
+        "fortios_kd_scope": "dns_server",
+    }
+
+    assert not latency_entity.available
+    assert ip_entity.available
+
+
 def test_ap_network_entities_expose_dashboard_matching_metadata() -> None:
     """Test AP management IP and board MAC entities can enrich ARP rows."""
     from custom_components.fortios_kd.sensor import (  # noqa: PLC0415

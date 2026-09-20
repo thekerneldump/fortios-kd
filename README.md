@@ -26,6 +26,8 @@ are recorded in the [changelog](CHANGELOG.md).
 - Optionally represent current FortiGate DHCP leases as separate network
   devices, preserving multiple leases for the same MAC and linking exact-MAC
   wifi clients in both directions.
+- Represent effective DNS servers as VDOM-scoped devices, including global
+  configuration, per-VDOM overrides, latency, and last-tested time.
 - Poll all hubs through Home Assistant `DataUpdateCoordinator` instances.
 - Keep disconnected client entities available for troubleshooting, with their
   live measurements marked unavailable.
@@ -140,6 +142,26 @@ DHCP synchronization is disabled by default and can be enabled independently
 for each FortiGate. If the endpoint is unavailable or the API account lacks
 permission, DHCP entities remain unavailable without blocking wifi monitoring.
 
+### VDOMs and DNS servers
+
+- Each configured VDOM is represented as a device connected to its FortiGate
+  using Home Assistant's established `via_device` relationship.
+- Each effective DNS server is represented as a separate device connected
+  through its VDOM. The DNS device identity includes both VDOM and IP address,
+  so the same inherited server remains distinguishable in different VDOMs.
+- DNS devices expose IP address, VDOM, configuration source, configured role,
+  current latency in milliseconds, and the calculated last-tested timestamp.
+- Configuration source reports **Global** or **VDOM override**, while configured
+  role reports **Primary** or **Secondary**. Runtime latency entries enrich
+  matching configured servers but do not independently create devices.
+- Each VDOM device exposes a **DNS servers** summary entity in addition to the
+  connected DNS-server devices.
+
+Global DNS configuration is refreshed every five minutes. Runtime latency is
+polled with the normal coordinator interval. DNS endpoint failures are isolated
+from wifi polling; configuration and latency diagnostics become unavailable
+independently rather than unloading the integration.
+
 Some fields are absent on particular FortiOS or FortiAP versions. Those entities
 may be unavailable when the firewall does not provide the underlying value.
 
@@ -172,8 +194,8 @@ The access profile needs read access to these FortiGate permission groups:
 
 | Permission group | Access | Used for |
 | --- | --- | --- |
-| System (`sysgrp`) | Read | System status, firmware details, model, hostname, and optional DHCP leases |
-| Network (`netgrp`) | Read | ARP table on FortiOS 6.4 and newer |
+| System (`sysgrp`) | Read | System status, firmware details, model, hostname, DNS configuration, VDOM resources, and optional DHCP leases |
+| Network (`netgrp`) | Read | ARP table on FortiOS 6.4 and newer, plus DNS latency |
 | Wifi Controller (`wifi`) | Read | Managed APs, clients, VAPs, and WTP profiles |
 
 The REST API access profile does not provide the FortiOS 6.2 ARP table. That
@@ -190,8 +212,13 @@ The integration currently reads these API resources:
 - `/api/v2/monitor/system/status`
 - `/api/v2/monitor/system/firmware` on versions that require it
 - `/api/v2/monitor/system/dhcp` when DHCP lease synchronization is enabled
+- `/api/v2/monitor/system/vdom-resource?vdom=*`
 - `/api/v2/cmdb/system/global` on versions that require it
+- `/api/v2/cmdb/system/vdom?vdom=*`
+- `/api/v2/cmdb/system/dns?vdom=<management-vdom>`
+- `/api/v2/cmdb/system/vdom-dns?vdom=*` when multiple VDOMs are configured
 - `/api/v2/monitor/network/arp` on FortiOS 6.4 and newer
+- `/api/v2/monitor/network/dns/latency?vdom=*`
 - `/api/v2/monitor/wifi/managed_ap`
 - `/api/v2/monitor/wifi/client`
 - `/api/v2/monitor/wifi/meta`
@@ -355,10 +382,21 @@ dashboard strategies automatically. After restarting Home Assistant, open
   wifi-client matches. Its independent FortiGate and Interface filters narrow
   the displayed leases. Its suggested title is **KD DHCP Entries** and its
   suggested URL is `kd-dhcp-entries`.
-- **FortiOS KD VDOM Resources** for per-VDOM CPU, memory, active-session, and
-  session-usage history. Its Firewall and VDOM filters can display matching
-  VDOMs together for comparison or as separate graph groups. Its suggested
-  title is **KD VDOM Resources** and its suggested URL is `kd-vdom-resources`.
+- **FortiOS KD VDOM Resources** for per-VDOM CPU, memory, active-session,
+  session-usage, and configured DNS-server latency history. Its Firewall and
+  VDOM filters can display matching VDOMs together for comparison or as
+  separate graph groups. Combined DNS legends include the preferred FortiGate
+  name when multiple firewalls are visible; filtered and separate-card views
+  use the DNS-server IP alone. Its suggested title is **KD VDOM Resources** and
+  its suggested URL is `kd-vdom-resources`.
+
+  **DNS latency legend note:** In the combined all-firewall view, a label such
+  as `Firewall name - DNS IP` may be visually truncated when the available
+  legend space is narrow. The full label remains available in the graph's hover
+  details, and **Separate by VDOM** provides compact IP-only labels. The longer
+  combined label is retained because it identifies the firewall unambiguously.
+  A future enhancement may assign each configured DNS server a short number so
+  combined labels can use a form such as `Firewall name - 1`.
 
 The Wifi client dashboard explicitly excludes ARP devices. The Wifi client and
 graph dashboards share the FortiGate, AP, and SSID filter selects. The graph
