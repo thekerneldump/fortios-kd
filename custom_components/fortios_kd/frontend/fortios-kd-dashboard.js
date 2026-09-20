@@ -1,3 +1,8 @@
+import {
+  preferredDeviceName,
+  preferredNamesByDevice,
+} from "./fortios-kd-preferred-names.js";
+
 const FILTER_DEFAULTS = new Set([
   "All",
   "unknown",
@@ -42,6 +47,7 @@ function labelNames(hass, device) {
 }
 
 function clientModel(hass) {
+  const preferredNames = preferredNamesByDevice(hass);
   const selectedFortigate = selectedFilter(
     hass,
     "select.wifi_client_fortigate_filter",
@@ -82,7 +88,7 @@ function clientModel(hass) {
       hass,
       `${base}_last_known_hostname`,
     );
-    const fortigate = stateValue(hass, `${base}_fortigate`);
+    const reportedFortigateName = stateValue(hass, `${base}_fortigate`);
     const accessPoint = stateValue(hass, `${base}_ap_name`);
     const ssid = stateValue(hass, `${base}_ssid`);
     const entity = registryEntry(hass.entities, macState.entity_id);
@@ -91,6 +97,12 @@ function clientModel(hass) {
     const areaName = registryName(registryEntry(hass.areas, areaId));
     const labels = labelNames(hass, clientDevice);
     const fortigateDeviceId = clientDevice?.via_device_id;
+    const fortigateDevice = registryEntry(hass.devices, fortigateDeviceId);
+    const fortigateName = preferredDeviceName(
+      preferredNames,
+      fortigateDevice,
+      reportedFortigateName,
+    );
     const accessPointDevice = devices.find(
       (device) =>
         device.via_device_id === fortigateDeviceId &&
@@ -119,7 +131,7 @@ function clientModel(hass) {
       macState.state,
       hostname,
       lastKnownHostname,
-      fortigate,
+      fortigateName,
       accessPoint,
       ssid,
       entity?.device_id || "",
@@ -129,7 +141,7 @@ function clientModel(hass) {
     );
 
     if (
-      !matchesFilter(selectedFortigate, fortigate) ||
+      !matchesFilter(selectedFortigate, fortigateName) ||
       !matchesFilter(selectedAccessPoint, accessPoint) ||
       !ssidMatches ||
       !areaMatches ||
@@ -172,7 +184,24 @@ function clientModel(hass) {
       { entity: macState.entity_id, name: "MAC address" },
       { entity: `${base}_last_known_mac`, name: "Last Known MAC" },
       { entity: `${base}_ip_address`, name: "IP address" },
-      { entity: `${base}_fortigate`, name: "FortiGate" },
+    );
+
+    rows.push(
+      fortigateDevice?.id
+        ? {
+            type: "button",
+            name: fortigateName,
+            icon: "mdi:shield-home",
+            action_name: "Open FortiGate",
+            tap_action: {
+              action: "navigate",
+              navigation_path: `/config/devices/device/${fortigateDevice.id}`,
+            },
+          }
+        : { entity: `${base}_fortigate`, name: "FortiGate" },
+    );
+
+    rows.push(
       { entity: `${base}_ap_name`, name: "Access point" },
       { entity: `${base}_ssid`, name: "SSID" },
       { entity: `${base}_hostname`, name: "Hostname" },

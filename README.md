@@ -33,6 +33,8 @@ are recorded in the [changelog](CHANGELOG.md).
   disconnects and across Home Assistant restarts.
 - Create shared FortiGate, access point, and SSID dashboard filters
   automatically.
+- Provide an editable FortiGate Preferred name for dashboard labels and filters
+  without changing the Home Assistant device name.
 - Optionally include configured but unassigned SSIDs in the SSID filter.
 - Mask sensitive values for screenshots, screen sharing, training, and demos.
 
@@ -269,6 +271,14 @@ The included Wifi client dashboard provides FortiGate, AP, SSID, area, and label
 filters. Area and label choices come from the Home Assistant device registry, so
 they also cover retained client devices that are currently unavailable.
 
+## Preferred dashboard names
+
+Each FortiGate device exposes a **Preferred name** configuration entity. Change
+it from the FortiGate device page to choose the name shown by FortiOS KD's
+bundled dashboards, firewall filters, and VDOM graph legends. The preference is
+local to the integration: it does not rename the Home Assistant device or alter
+the FortiGate hostname. Clearing the value restores the device-name fallback.
+
 ## Privacy masking
 
 Privacy controls are configured independently for each FortiGate hub:
@@ -322,7 +332,7 @@ cards, both of which can be installed through HACS.
 
 ### Community dashboards
 
-On Home Assistant 2026.5 or newer, FortiOS KD registers five community
+On Home Assistant 2026.5 or newer, FortiOS KD registers six community
 dashboard strategies automatically. After restarting Home Assistant, open
 **Settings > Dashboards**, select **Add dashboard**, and choose:
 
@@ -345,6 +355,10 @@ dashboard strategies automatically. After restarting Home Assistant, open
   wifi-client matches. Its independent FortiGate and Interface filters narrow
   the displayed leases. Its suggested title is **KD DHCP Entries** and its
   suggested URL is `kd-dhcp-entries`.
+- **FortiOS KD VDOM Resources** for per-VDOM CPU, memory, active-session, and
+  session-usage history. Its Firewall and VDOM filters can display matching
+  VDOMs together for comparison or as separate graph groups. Its suggested
+  title is **KD VDOM Resources** and its suggested URL is `kd-vdom-resources`.
 
 The Wifi client dashboard explicitly excludes ARP devices. The Wifi client and
 graph dashboards share the FortiGate, AP, and SSID filter selects. The graph

@@ -1,3 +1,8 @@
+import {
+  preferredDeviceName,
+  preferredNamesByDevice,
+} from "./fortios-kd-preferred-names.js";
+
 const ARP_CARD_ELEMENT = "fortios-kd-arp-entry-grid";
 const STRATEGY_ELEMENT = "ll-strategy-dashboard-fortios-kd-arp-entries";
 const UNAVAILABLE_STATES = new Set(["unknown", "unavailable", ""]);
@@ -47,15 +52,12 @@ function registryEntry(registry, id) {
   return registry?.get?.(id) ?? registry?.[id];
 }
 
-function registryName(entry, fallback = "") {
-  return entry?.name_by_user || entry?.name || fallback;
-}
-
 function isCurrent(state) {
   return state && !UNAVAILABLE_STATES.has(state.state);
 }
 
 function arpModel(hass) {
+  const preferredNames = preferredNamesByDevice(hass);
   const entriesByDevice = new Map();
 
   for (const state of Object.values(hass.states)) {
@@ -107,6 +109,11 @@ function arpModel(hass) {
       interfaceName,
       macAddress,
       fortigateDevice,
+      fortigateName: preferredDeviceName(
+        preferredNames,
+        fortigateDevice,
+        "FortiGate",
+      ),
       title,
     });
   }
@@ -138,7 +145,7 @@ function arpModel(hass) {
     if (entry.fortigateDevice?.id) {
       rows.push({
         type: "button",
-        name: registryName(entry.fortigateDevice, "FortiGate"),
+        name: entry.fortigateName,
         icon: "mdi:shield-home",
         action_name: "Open FortiGate",
         tap_action: {
@@ -168,7 +175,7 @@ function arpModel(hass) {
       entry.deviceId,
       entry.title,
       entry.fortigateDevice?.id || "",
-      registryName(entry.fortigateDevice),
+      entry.fortigateName,
     );
     cards.push({ type: "entities", title: entry.title, entities: rows });
   }

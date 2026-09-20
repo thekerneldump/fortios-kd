@@ -27,6 +27,10 @@ async def test_dashboard_strategy_asset(hass: HomeAssistant) -> None:
     assert "registryEntry(hass.entities, macState.entity_id)" in source
     assert "registryEntry(hass.devices, entity?.device_id)" in source
     assert "clientDevice?.via_device_id" in source
+    assert 'from "./fortios-kd-preferred-names.js"' in source
+    assert "preferredNamesByDevice(hass)" in source
+    assert "preferredDeviceName(" in source
+    assert 'action_name: "Open FortiGate"' in source
     assert 'selectedSsid === "Unavailable Clients"' in source
     assert 'state.attributes.fortios_kd_entry_type === "wifi_client"' in source
     assert "type: `custom:${CLIENT_CARD_ELEMENT}`" in source
@@ -75,6 +79,9 @@ async def test_wifi_graph_dashboard_strategy_asset(hass: HomeAssistant) -> None:
     assert "registryEntry(hass.entities, state.entity_id)" in source
     assert "registryEntry(hass.devices, deviceId)" in source
     assert "device?.via_device_id" in source
+    assert 'from "./fortios-kd-preferred-names.js"' in source
+    assert "preferredNamesByDevice(hass)" in source
+    assert "preferredDeviceName(preferredNames, fortigate)" in source
     assert "Array.isArray(ssids)" in source
     assert "not per-SSID measurements" in source
     assert "name: accessPointName" in source
@@ -112,6 +119,8 @@ async def test_arp_dashboard_strategy_asset(hass: HomeAssistant) -> None:
     assert "if (!isCurrent(macState))" in source
     assert 'action_name: "Open ARP device"' in source
     assert 'action_name: "Open FortiGate"' in source
+    assert 'from "./fortios-kd-preferred-names.js"' in source
+    assert "preferredDeviceName(" in source
     assert '["wifi_client_match", "WiFi client match"]' in source
     assert '["ip_conflict", "IP conflict"]' in source
     assert "class FortiOSKDARPEntryGrid extends HTMLElement" in source
@@ -135,6 +144,9 @@ async def test_arp_table_dashboard_strategy_asset(hass: HomeAssistant) -> None:
     assert 'entity: "select.arp_table_lease_type_filter"' in source
     assert 'name: "Firewall"' in source
     assert "selectedFortigate !== fortigateName" in source
+    assert 'from "./fortios-kd-preferred-names.js"' in source
+    assert "preferredNamesByDevice(hass)" in source
+    assert "preferredDeviceName(" in source
     assert "!interfaces.includes(selectedInterface)" in source
     assert "selectedLeaseType !== leaseFilterValue" in source
     assert 'const FILTER_NO_DHCP_LEASE = "No DHCP lease"' in source
@@ -199,6 +211,9 @@ async def test_dhcp_dashboard_strategy_asset(hass: HomeAssistant) -> None:
     assert 'entry.fields.get("mac_address")' in source
     assert 'entry.fields.get("interfaces")' in source
     assert "selectedFortigate !== fortigateName" in source
+    assert 'from "./fortios-kd-preferred-names.js"' in source
+    assert "preferredNamesByDevice(hass)" in source
+    assert "preferredDeviceName(" in source
     assert "!interfaces.includes(selectedInterface)" in source
     assert "`${ipAddress} - ${interfaceName}`" in source
     assert 'action_name: "Open DHCP device"' in source
@@ -236,6 +251,9 @@ async def test_vdom_resource_dashboard_strategy_asset(hass: HomeAssistant) -> No
     assert 'metric: "session_usage_percent"' in source
     assert 'title: "Session Usage Percent"' in source
     assert "vdomDevice?.via_device_id" in source
+    assert 'from "./fortios-kd-preferred-names.js"' in source
+    assert "preferredNamesByDevice(hass)" in source
+    assert "preferredDeviceName(" in source
     assert "class FortiOSKDVDOMResourceGraphGrid extends HTMLElement" in source
     assert "type: `custom:${VDOM_GRAPH_CARD_ELEMENT}`" in source
     assert 'const GRAPH_LAYOUT_COMBINED = "Combined by resource"' in source
@@ -265,7 +283,7 @@ async def test_all_frontend_assets_are_loaded(hass: HomeAssistant) -> None:
         FRONTEND_MODULE_URLS,
     )
 
-    assert len(FRONTEND_ASSETS) == 7
+    assert len(FRONTEND_ASSETS) == 8
     assert len(FRONTEND_MODULE_URLS) == 1
     assert FRONTEND_MODULE_URLS[0].startswith(f"{FRONTEND_LOADER_URL}?v=")
 
@@ -276,3 +294,20 @@ async def test_all_frontend_assets_are_loaded(hass: HomeAssistant) -> None:
     assert 'import "./fortios-kd-arp-table-dashboard.js";' in loader_source
     assert 'import "./fortios-kd-dhcp-dashboard.js";' in loader_source
     assert 'import "./fortios-kd-vdom-resources-dashboard.js";' in loader_source
+
+
+async def test_preferred_name_frontend_helper(hass: HomeAssistant) -> None:
+    """Test dashboard aliases are discovered from device-linked text entities."""
+    integration = await async_get_integration(hass, DOMAIN)
+    await integration.async_get_component()
+
+    from custom_components.fortios_kd.frontend import FRONTEND_ASSETS  # noqa: PLC0415
+
+    path = FRONTEND_ASSETS["/fortios_kd/fortios-kd-preferred-names.js"]
+    source = path.read_text()
+
+    assert '"fortios_kd_preferred_name_scope"' in source
+    assert 'scope = "fortigate"' in source
+    assert "registryEntry(hass.entities, state.entity_id)" in source
+    assert "names.set(entity.device_id, preferredName)" in source
+    assert "preferredNames.get(device.id)" in source

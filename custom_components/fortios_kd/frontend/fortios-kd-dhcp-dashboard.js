@@ -1,3 +1,8 @@
+import {
+  preferredDeviceName,
+  preferredNamesByDevice,
+} from "./fortios-kd-preferred-names.js";
+
 const DHCP_CARD_ELEMENT = "fortios-kd-dhcp-entry-grid";
 const STRATEGY_ELEMENT = "ll-strategy-dashboard-fortios-kd-dhcp-entries";
 const UNAVAILABLE_STATES = new Set(["unknown", "unavailable", ""]);
@@ -48,10 +53,6 @@ function registryEntry(registry, id) {
   return registry?.get?.(id) ?? registry?.[id];
 }
 
-function registryName(entry, fallback = "") {
-  return entry?.name_by_user || entry?.name || fallback;
-}
-
 function isCurrent(state) {
   return state && !UNAVAILABLE_STATES.has(state.state);
 }
@@ -73,6 +74,7 @@ function currentStateValues(state) {
 }
 
 function dhcpModel(hass) {
+  const preferredNames = preferredNamesByDevice(hass);
   const selectedFortigate =
     currentStateValue(hass, "select.dhcp_entries_fortigate_filter") ||
     FILTER_ALL;
@@ -132,7 +134,11 @@ function dhcpModel(hass) {
       hass.devices,
       dhcpDevice?.via_device_id,
     );
-    const fortigateName = registryName(fortigateDevice, "FortiGate");
+    const fortigateName = preferredDeviceName(
+      preferredNames,
+      fortigateDevice,
+      "FortiGate",
+    );
     const interfaces = currentStateValues(interfaceState);
 
     if (
@@ -159,6 +165,7 @@ function dhcpModel(hass) {
     entries.push({
       ...entry,
       fortigateDevice,
+      fortigateName,
       ipAddress,
       macAddress,
       title,
@@ -193,7 +200,7 @@ function dhcpModel(hass) {
     if (entry.fortigateDevice?.id) {
       rows.push({
         type: "button",
-        name: registryName(entry.fortigateDevice, "FortiGate"),
+        name: entry.fortigateName,
         icon: "mdi:shield-home",
         action_name: "Open FortiGate",
         tap_action: {
@@ -239,7 +246,7 @@ function dhcpModel(hass) {
       entry.deviceId,
       entry.title,
       entry.fortigateDevice?.id || "",
-      registryName(entry.fortigateDevice),
+      entry.fortigateName,
       entry.wifiDeviceId || "",
     );
     cards.push({ type: "entities", title: entry.title, entities: rows });

@@ -3,6 +3,14 @@
 Notable changes and deliberate compatibility, security, and privacy decisions
 are recorded here for each release.
 
+## Unreleased
+
+### Added
+
+- Add an editable **Preferred name** configuration entity to each FortiGate.
+  Bundled dashboards use it for FortiGate labels, graph legends, and firewall
+  filters without renaming the underlying Home Assistant device.
+
 ## 0.6.0 - 2026-09-19
 
 ### Added

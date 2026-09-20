@@ -3,6 +3,8 @@
 DOMAIN = "fortios_kd"
 DATA_FILTER_MANAGER = "filter_manager"
 
+CONF_PREFERRED_NAME = "preferred_name"
+
 DEFAULT_VERIFY_SSL = True
 
 CONF_ORGANIZATION_MODE = "organization_mode"
