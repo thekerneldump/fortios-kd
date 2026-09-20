@@ -390,6 +390,14 @@ dashboard strategies automatically. After restarting Home Assistant, open
   use the DNS-server IP alone. Its suggested title is **KD VDOM Resources** and
   its suggested URL is `kd-vdom-resources`.
 
+  **DNS latency legend note:** In the combined all-firewall view, a label such
+  as `Firewall name - DNS IP` may be visually truncated when the available
+  legend space is narrow. The full label remains available in the graph's hover
+  details, and **Separate by VDOM** provides compact IP-only labels. The longer
+  combined label is retained because it identifies the firewall unambiguously.
+  A future enhancement may assign each configured DNS server a short number so
+  combined labels can use a form such as `Firewall name - 1`.
+
 The Wifi client dashboard explicitly excludes ARP devices. The Wifi client and
 graph dashboards share the FortiGate, AP, and SSID filter selects. The graph
 dashboard includes calculated RX/TX rates, FortiGate-reported bandwidth,
