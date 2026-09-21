@@ -82,6 +82,18 @@ function scopedIpKey(fortigateDeviceId, ipAddress) {
   return `${fortigateDeviceId}\u0000${ipAddress}`;
 }
 
+function discoverySourceLabel(source) {
+  const normalized = String(source || "").trim().toLowerCase();
+  const labels = {
+    cdp: "CDP",
+    dhcp: "DHCP",
+    dns: "DNS",
+    fortiguard: "FortiGuard",
+    http: "HTTP",
+  };
+  return labels[normalized] || source || "Device";
+}
+
 function arpTableModel(hass) {
   const preferredNames = preferredNamesByDevice(hass);
   const selectedFortigate =
@@ -93,6 +105,7 @@ function arpTableModel(hass) {
   const wifiClientsByMatchId = new Map();
   const dhcpHostnamesByMatchId = new Map();
   const dhcpLeaseTypesByMatchId = new Map();
+  const detectedDevicesByMatchId = new Map();
   const accessPointsByMatchId = new Map();
   const accessPointsByScopedIp = new Map();
   const entriesByDevice = new Map();
@@ -108,10 +121,13 @@ function arpTableModel(hass) {
       const macSuffix = "_mac_address";
       if (matchId && state.entity_id.endsWith(macSuffix)) {
         const base = state.entity_id.slice(0, -macSuffix.length);
+        const hostnameState = hass.states[`${base}_hostname`];
         wifiClientsByMatchId.set(matchId, {
           deviceId: entity.device_id,
           available: isCurrent(state),
-          hostname: currentStateValue(hass, `${base}_hostname`),
+          hostname: isCurrent(hostnameState) ? hostnameState.state : undefined,
+          hostnameSource:
+            hostnameState?.attributes?.fortios_kd_hostname_source || "wifi",
           lastKnownHostname: currentStateValue(
             hass,
             `${base}_last_known_hostname`,
@@ -126,7 +142,11 @@ function arpTableModel(hass) {
       const field = state.attributes.fortios_kd_dhcp_field;
       if (matchId && isCurrent(state)) {
         if (field === "hostnames") {
-          dhcpHostnamesByMatchId.set(matchId, state.state);
+          dhcpHostnamesByMatchId.set(matchId, {
+            hostname: state.state,
+            source:
+              state.attributes.fortios_kd_hostname_source || "dhcp",
+          });
         } else if (field === "assignment_type") {
           const leaseType =
             state.state === "DHCP Reserved"
@@ -138,6 +158,21 @@ function arpTableModel(hass) {
             dhcpLeaseTypesByMatchId.set(matchId, leaseType);
           }
         }
+      }
+      continue;
+    }
+
+    if (state.attributes.fortios_kd_entry_type === "detected_device") {
+      const matchId = state.attributes.fortios_kd_match_id;
+      const field = state.attributes.fortios_kd_device_field;
+      const hostname = state.attributes.hostname;
+      if (field === "details" && matchId && isCurrent(state)) {
+        detectedDevicesByMatchId.set(matchId, {
+          deviceId: entity.device_id,
+          hostname:
+            typeof hostname === "string" && hostname ? hostname : undefined,
+          source: state.attributes.hostname_source,
+        });
       }
       continue;
     }
@@ -228,16 +263,27 @@ function arpTableModel(hass) {
     const dhcpLeaseType = entry.matchId
       ? dhcpLeaseTypesByMatchId.get(entry.matchId)
       : undefined;
+    const detectedDevice = entry.matchId
+      ? detectedDevicesByMatchId.get(entry.matchId)
+      : undefined;
     const hostname =
       accessPoint?.name
         ? `${accessPoint.name} (AP)`
         : wifiClient?.available && wifiClient.hostname
-        ? `${wifiClient.hostname} (WiFi)`
-        : dhcpHostname
-          ? `${dhcpHostname} (DHCP)`
+        ? `${wifiClient.hostname} (${discoverySourceLabel(
+            wifiClient.hostnameSource,
+          )})`
+        : dhcpHostname?.hostname
+          ? dhcpHostname.source === "device_info"
+            ? dhcpHostname.hostname
+            : `${dhcpHostname.hostname} (DHCP)`
           : wifiClient?.lastKnownHostname
             ? `(${wifiClient.lastKnownHostname}) (WiFi)`
-            : undefined;
+            : detectedDevice?.hostname
+              ? `${detectedDevice.hostname} (${discoverySourceLabel(
+                  detectedDevice.source,
+                )})`
+              : undefined;
 
     const interfaces = currentStateValues(interfaceState);
     const leaseFilterValue = dhcpLeaseType || FILTER_NO_DHCP_LEASE;
@@ -261,6 +307,7 @@ function arpTableModel(hass) {
       hostname: hostname || "—",
       dhcpLeaseType: dhcpLeaseType || "—",
       wifiDeviceId: wifiClient?.deviceId,
+      detectedDeviceId: detectedDevice?.deviceId,
     });
   }
 
@@ -279,6 +326,7 @@ function arpTableModel(hass) {
         row.hostname,
         row.dhcpLeaseType,
         row.wifiDeviceId || "",
+        row.detectedDeviceId || "",
       ])
       .concat([selectedFortigate, selectedInterface, selectedLeaseType])
       .join("\u001e"),
@@ -415,10 +463,11 @@ class FortiOSKDARPTable extends HTMLElement {
       "Hostname",
       "Lease type",
       "WiFi",
+      "Device Info",
     ]) {
       const heading = document.createElement("th");
       heading.textContent = label;
-      if (label === "Device" || label === "WiFi") {
+      if (label === "Device" || label === "WiFi" || label === "Device Info") {
         heading.className = "icon-cell";
       }
       headerRow.append(heading);
@@ -451,6 +500,19 @@ class FortiOSKDARPTable extends HTMLElement {
         );
       }
       tableRow.append(wifiCell);
+
+      const detectedDeviceCell = document.createElement("td");
+      detectedDeviceCell.className = "icon-cell";
+      if (row.detectedDeviceId) {
+        detectedDeviceCell.append(
+          iconLink(
+            row.detectedDeviceId,
+            "mdi:devices",
+            "Open detected device",
+          ),
+        );
+      }
+      tableRow.append(detectedDeviceCell);
       body.append(tableRow);
     }
     table.append(body);

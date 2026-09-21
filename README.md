@@ -26,6 +26,13 @@ are recorded in the [changelog](CHANGELOG.md).
 - Optionally represent current FortiGate DHCP leases as separate network
   devices, preserving multiple leases for the same MAC and linking exact-MAC
   wifi clients in both directions.
+- Optionally synchronize FortiGate detected-device inventory as compact linked
+  devices, including identity, hostname and discovery source, IPv4/IPv6,
+  interface, OS, hardware classification, software version, last-seen time,
+  recent/stale status, and inventory-change diagnostics.
+- Optionally represent physical and VLAN interfaces from every VDOM as linked
+  devices, including addressing, link details, VLAN relationships, and
+  calculated traffic, packet, and error rates.
 - Represent effective DNS servers as VDOM-scoped devices, including global
   configuration, per-VDOM overrides, latency, and last-tested time.
 - Poll all hubs through Home Assistant `DataUpdateCoordinator` instances.
@@ -85,12 +92,14 @@ FortiOS KD currently provides information in the following areas.
   matched client hostname, or whether no wifi client is currently detected
 - The KD ARP Table hostname column first matches managed access points by board
   MAC, with their management IP as a same-FortiGate fallback. It then prefers a
-  live wifi-client hostname, a current exact-MAC DHCP hostname, and finally the
-  client's Last Known Hostname. Displayed values identify their **AP**, **WiFi**,
-  or **DHCP** source. A neighboring **Lease type** column reports **Reserved** or
-  **Leased** for current DHCP matches. Dedicated cascading filters narrow the
-  table by Firewall, Interface, and Lease type; lease choices include rows with
-  no current DHCP lease.
+  live wifi-client hostname, a current exact-MAC DHCP hostname, the
+  detected-device inventory hostname, and finally the client's Last Known
+  Hostname. Displayed values identify their **AP**, **WiFi**, **DHCP**, or
+  **Device Info** source. A neighboring **Lease type** column reports
+  **Reserved** or **Leased** for current DHCP matches. Dedicated cascading
+  filters narrow the table by Firewall, Interface, and Lease type; lease choices
+  include rows with no current DHCP lease. When device inventory syncing is
+  enabled, a final icon opens the exact-MAC detected-device match.
 - An IP Conflict diagnostic flags a different current MAC claiming the same IP
   in wifi-client or ARP data. Possible causes include overlapping DHCP scopes,
   multiple DHCP servers, static-address collisions, stale records, or spoofing.
@@ -137,10 +146,63 @@ like the FortiGate API key.
   enabled. It reports **DHCP Reserved** for a matching reserved lease, **DHCP**
   for another matching lease, or **Static or Unknown** when the client's current
   IP has no matching lease.
+- When a DHCP lease has no hostname, an exact-MAC detected-device hostname is
+  used as a fallback and labeled **(Device Info)**.
 
 DHCP synchronization is disabled by default and can be enabled independently
 for each FortiGate. If the endpoint is unavailable or the API account lacks
 permission, DHCP entities remain unavailable without blocking wifi monitoring.
+
+### Detected-device inventory
+
+- Exact FortiGate-scoped MAC matches enrich ARP, DHCP, and wifi-client device
+  metadata with the detected hardware manufacturer, family or type, hardware
+  version, and software version.
+- A separate **OUI-derived vendor** diagnostic resolves globally assigned MAC
+  prefixes from Home Assistant's packaged IEEE database. It does not replace
+  FortiGuard's vendor classification and does not require an external lookup.
+  Locally administered or randomized MAC addresses may not have an OUI vendor.
+- **Vendor identification assessment** reports **FortiGuard identification may
+  be wrong** when a FortiGuard-sourced vendor conflicts with the normalized OUI
+  vendor. It reports agreement or why comparison was unavailable otherwise.
+- ARP, DHCP, and wifi-client devices gain a **Detected Device Match** diagnostic
+  with the inventory hostname, IPv4/IPv6 addresses, interface, OS, and hardware
+  classification. Dashboard links open the matching detected-device object
+  without merging the independent devices.
+- Each detected device exposes **Recently seen** or **Stale** using a rolling
+  one-hour threshold. **Inventory changes** and **Last inventory change** retain
+  the latest changed field names and timestamp without storing the previous
+  potentially sensitive values.
+- Both IPv4 and IPv6 addresses are indexed for correlation. IPv6 is exposed now
+  and can be reused by a future neighbor-table feature without treating an IP
+  address as persistent device identity.
+
+### Interfaces
+
+- Physical and VLAN interfaces from every returned VDOM are represented as
+  devices linked to their FortiGate. Device identity includes both VDOM and
+  interface name so repeated interface names remain distinct.
+- Interface diagnostics include name, alias, IPv4 address, prefix length, link
+  state, negotiated speed, duplex, VLAN ID, and parent interface when FortiOS
+  supplies those fields.
+- Each interface has an editable **Preferred name** used by interface graph
+  legends. It is initially populated from the FortiGate interface alias, or the
+  interface name when no alias exists. A Home Assistant override is preserved
+  across refreshes and restarts; it is replaced only after the alias changes on
+  the FortiGate, at which point the new alias is applied once.
+- TX/RX packet, byte, bit, and error rates are calculated from successive
+  cumulative counters. Bit rates are the byte-rate delta multiplied by eight.
+  The first sample after setup or a counter reset remains unavailable until a
+  valid delta can be calculated.
+- Byte rates use bytes per second as their native unit and request megabytes per
+  second as Home Assistant's default display unit. Bit rates use bits per second
+  and request megabits per second. Packet and error rates use per-second units.
+
+Interface synchronization is disabled by default and can be enabled independently
+for each FortiGate. The endpoint is explicitly queried with `include_vlan=true`
+and `vdom=*`. Some FortiOS builds reject that monitor request with a duplicate
+`Etag` error. FortiOS KD detects that response once and automatically falls back
+to requesting each configured VDOM separately.
 
 ### VDOMs and DNS servers
 
@@ -197,7 +259,7 @@ The access profile needs read access to these FortiGate permission groups:
 
 | Permission group | Access | Used for |
 | --- | --- | --- |
-| System (`sysgrp`) | Read | System status, firmware details, model, hostname, DNS configuration, VDOM resources, and optional DHCP leases |
+| System (`sysgrp`) | Read | System status, firmware details, model, hostname, DNS configuration, VDOM resources, and optional DHCP leases and interface statistics |
 | Network (`netgrp`) | Read | ARP table on FortiOS 6.4 and newer, plus DNS latency |
 | Wifi Controller (`wifi`) | Read | Managed APs, clients, VAPs, and WTP profiles |
 
@@ -215,6 +277,8 @@ The integration currently reads these API resources:
 - `/api/v2/monitor/system/status`
 - `/api/v2/monitor/system/firmware` on versions that require it
 - `/api/v2/monitor/system/dhcp` when DHCP lease synchronization is enabled
+- `/api/v2/monitor/system/interface?include_vlan=true&vdom=*` when interface synchronization is enabled
+- `/api/v2/monitor/user/device` when detected-device synchronization is enabled
 - `/api/v2/monitor/system/vdom-resource?vdom=*`
 - `/api/v2/cmdb/system/global` on versions that require it
 - `/api/v2/cmdb/system/vdom?vdom=*`
@@ -254,6 +318,16 @@ When adding a FortiGate, provide:
   ARP fallback for wifi-client IP entities.
 - **Sync DHCP lease devices:** Create and maintain diagnostic devices for
   current DHCP leases and add exact-MAC assignment diagnostics to wifi clients.
+- **Sync detected device inventory:** Create compact diagnostic devices from
+  FortiGate device identification. Each device exposes its selected inventory
+  fields on a details entity plus proper last-seen, recent/stale, and inventory
+  change diagnostics. Inventory hostnames are used only when a more direct
+  hostname source is unavailable.
+  The larger inventory endpoint is refreshed every five minutes to avoid
+  generating hundreds of rapidly changing last-seen states.
+- **Sync interface devices and rates for all VDOMs:** Create linked interface
+  devices from the FortiOS monitor endpoint, include VLAN interfaces, and
+  calculate packet, byte, and error rates from counter deltas.
 
 ### Areas and labels
 
@@ -362,7 +436,7 @@ cards, both of which can be installed through HACS.
 
 ### Community dashboards
 
-On Home Assistant 2026.5 or newer, FortiOS KD registers six community
+On Home Assistant 2026.5 or newer, FortiOS KD registers eight community
 dashboard strategies automatically. After restarting Home Assistant, open
 **Settings > Dashboards**, select **Add dashboard**, and choose:
 
@@ -377,10 +451,23 @@ dashboard strategies automatically. After restarting Home Assistant, open
   **KD ARP Entries** and its suggested URL is `kd-arp-entries`.
 - **FortiOS KD ARP Table** for a compact, filterable table of current IP
   addresses, interfaces, MAC addresses, sourced hostnames, and lease types,
-  with direct links to ARP devices and exactly matched wifi clients. Its
+  with direct links to ARP devices, exactly matched wifi clients, and detected
+  device inventory. Its
   Firewall, Interface, and Lease type filters are independent of the Wifi
   dashboard filters. Its suggested title is **KD ARP Table** and its suggested
   URL is `kd-arp-table`.
+- **FortiOS KD Device Table** for a compact table of FortiGate-detected device
+  hostnames, IP and MAC addresses, operating systems, hardware vendors, hardware
+  types, hardware families, hardware versions, software versions, and relative
+  Last seen times (with the exact local timestamp available on hover). The first
+  icon opens the
+  detected-device object, while an exact FortiGate-scoped MAC match adds an
+  icon linking to the corresponding wifi client. Independent filters cover
+  FortiGate, hardware vendor, hardware type, hardware family, operating system,
+  software version, interface, and rolling Last seen windows of less than or
+  more than 1 hour, 1 day, 1 week, 1 month (30 days), or 1 year (365 days). Its
+  suggested title is **KD Device Table** and its suggested URL is
+  `kd-device-table`.
 - **FortiOS KD DHCP Entries** for current DHCP-lease device cards, including
   lease status, reservation type, expiration, server ID, and optional
   wifi-client matches. Its independent FortiGate and Interface filters narrow
@@ -407,6 +494,24 @@ dashboard strategies automatically. After restarting Home Assistant, open
   combined label is retained because it identifies the firewall unambiguously.
   A future enhancement may assign each configured DNS server a short number so
   combined labels can use a form such as `Firewall name - 1`.
+- **FortiOS KD Interface Graphs** for TX/RX packet, data, and error rates across
+  physical and VLAN interfaces in every VDOM. Its Firewall filter uses each
+  FortiGate's preferred name, while additional live filters narrow the graphs
+  by link state, observed speed/duplex combination, or parent interface. Two
+  independent switches hide hardware-switch member ports and logical WiFi SSID
+  interfaces by default. FortiGate's available-interface metadata identifies
+  hardware-switch membership and WiFi interfaces; configured FortiAP VAP names
+  provide a fallback for WiFi classification. Disable either switch to include
+  that interface class in the graphs.
+  Network-style **Mbps** data-rate graphs appear first, followed by **MB/s**
+  data-rate graphs, packet rates, and error rates.
+  **Combined by rate** puts all matching interfaces on one card per rate with
+  `Firewall - VDOM - Interface` legends, shortened to `VDOM - Interface` when
+  one firewall is selected. **Separated by firewall** creates one section per
+  FortiGate and also uses `VDOM - Interface`. The Time
+  span picker offers the same 1 week through 30 minute choices as the VDOM
+  resource dashboard and defaults to 1 hour. Its suggested title is **KD
+  Interface Graphs** and its suggested URL is `kd-interface-graphs`.
 
 The Wifi client dashboard explicitly excludes ARP devices. The Wifi client and
 graph dashboards share the FortiGate, AP, and SSID filter selects. The graph

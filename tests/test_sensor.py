@@ -1,6 +1,6 @@
 """Tests for FortiOS KD sensors."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -38,6 +38,68 @@ def test_registered_wifi_client_macs() -> None:
     ]
 
     assert _registered_wifi_client_macs(entries, "FGT123") == {"aa:bb:cc:dd:ee:ff"}
+
+
+def test_registered_detected_device_macs() -> None:
+    """Test extracting previously registered detected devices."""
+    from custom_components.fortios_kd.sensor import (  # noqa: PLC0415
+        _registered_detected_device_macs,
+    )
+
+    entries = [
+        SimpleNamespace(
+            domain="sensor",
+            platform="fortios_kd",
+            unique_id="FGT123_detected_device_aa:bb:cc:dd:ee:ff_details",
+        ),
+        SimpleNamespace(
+            domain="sensor",
+            platform="fortios_kd",
+            unique_id="FGT123_detected_device_aa:bb:cc:dd:ee:ff_last_seen",
+        ),
+        SimpleNamespace(
+            domain="sensor",
+            platform="fortios_kd",
+            unique_id="FGT999_detected_device_11:22:33:44:55:66_details",
+        ),
+    ]
+
+    assert _registered_detected_device_macs(entries, "FGT123") == {"aa:bb:cc:dd:ee:ff"}
+
+
+def test_registered_interface_keys() -> None:
+    """Test extracting registered root and non-root interfaces."""
+    from custom_components.fortios_kd.sensor import (  # noqa: PLC0415
+        _registered_interface_keys,
+    )
+
+    entries = [
+        SimpleNamespace(
+            domain="sensor",
+            platform="fortios_kd",
+            unique_id="FGT123_interface_iot_vlan_name",
+        ),
+        SimpleNamespace(
+            domain="sensor",
+            platform="fortios_kd",
+            unique_id="FGT123_interface_iot_vlan_ip",
+        ),
+        SimpleNamespace(
+            domain="sensor",
+            platform="fortios_kd",
+            unique_id="FGT123_interface_lab::iot_vlan_name",
+        ),
+        SimpleNamespace(
+            domain="sensor",
+            platform="fortios_kd",
+            unique_id="FGT999_interface_wan1_name",
+        ),
+    ]
+
+    assert _registered_interface_keys(entries, "FGT123") == {
+        ("lab", "iot_vlan"),
+        ("root", "iot_vlan"),
+    }
 
 
 def test_registered_arp_macs() -> None:
@@ -291,6 +353,128 @@ def test_dns_server_entities_are_linked_through_vdom_device() -> None:
     assert ip_entity.available
 
 
+def test_interface_entities_expose_diagnostics_and_rates() -> None:
+    """Test interface devices include link details and calculated rates."""
+    from custom_components.fortios_kd.sensor import (  # noqa: PLC0415
+        create_interface_entities,
+    )
+
+    record = {
+        "name": "iot_vlan",
+        "alias": "IoT devices",
+        "ip": "192.0.2.1",
+        "mask": 24,
+        "link": True,
+        "speed": 1000,
+        "duplex": 1,
+        "vlanid": 102,
+        "interface": "port1",
+        "tx_packets_per_second": 10.25,
+        "rx_packets_per_second": 20.5,
+        "tx_bytes_per_second": 1_000_000.0,
+        "rx_bytes_per_second": 2_000_000.0,
+        "tx_bits_per_second": 8_000_000.0,
+        "rx_bits_per_second": 16_000_000.0,
+        "tx_errors_per_second": 0.0,
+        "rx_errors_per_second": 0.5,
+        "vdom": "root",
+    }
+    coordinator = Mock()
+    coordinator.last_update_success = True
+    coordinator.interface_data_available = True
+    coordinator.data = {"configured_vaps": {"results": []}}
+    coordinator.get_interface.return_value = record
+
+    entities = create_interface_entities(
+        coordinator,
+        "root",
+        "iot_vlan",
+        "FGT123",
+        "TestGate",
+    )
+    values = {entity.name: entity.native_value for entity in entities}
+
+    assert values == {
+        "Name": "iot_vlan",
+        "Interface kind": "Network interface",
+        "Alias": "IoT devices",
+        "IP address": "192.0.2.1",
+        "Network mask": 24,
+        "Link": "Up",
+        "Link speed": 1000,
+        "Duplex": "Full",
+        "VLAN ID": 102,
+        "Parent interface": "port1",
+        "TX packet rate": 10.25,
+        "RX packet rate": 20.5,
+        "TX data rate": 1_000_000.0,
+        "RX data rate": 2_000_000.0,
+        "TX data rate (bits)": 8_000_000.0,
+        "RX data rate (bits)": 16_000_000.0,
+        "TX error rate": 0.0,
+        "RX error rate": 0.5,
+    }
+    assert all(entity.available for entity in entities)
+    assert entities[0].unique_id == "FGT123_interface_iot_vlan_name"
+    assert entities[0].device_info["identifiers"] == {
+        ("fortios_kd", "FGT123_interface_iot_vlan")
+    }
+    assert entities[0].device_info["via_device"] == ("fortios_kd", "FGT123")
+    assert entities[0].device_info["name"] == "Interface iot_vlan (root, TestGate)"
+    assert entities[0].extra_state_attributes == {
+        "fortios_kd_entry_type": "interface",
+        "fortios_kd_interface_field": "name",
+        "fortios_kd_interface": "iot_vlan",
+        "fortios_kd_vdom": "root",
+    }
+
+    tx_data_rate = next(entity for entity in entities if entity.name == "TX data rate")
+    assert tx_data_rate.native_unit_of_measurement == "B/s"
+    assert tx_data_rate.suggested_unit_of_measurement == "MB/s"
+    assert tx_data_rate.device_class == "data_rate"
+    assert tx_data_rate.state_class == "measurement"
+    assert tx_data_rate.extra_state_attributes == {
+        "fortios_kd_entry_type": "interface",
+        "fortios_kd_interface_field": "tx_bytes_per_second",
+        "fortios_kd_interface": "iot_vlan",
+        "fortios_kd_vdom": "root",
+        "fortios_kd_metric": "tx_bytes_per_second",
+        "fortios_kd_scope": "interface",
+    }
+    tx_bit_rate = next(
+        entity for entity in entities if entity.name == "TX data rate (bits)"
+    )
+    assert tx_bit_rate.native_unit_of_measurement == "bit/s"
+    assert tx_bit_rate.suggested_unit_of_measurement == "Mbit/s"
+    assert tx_bit_rate.device_class == "data_rate"
+    assert tx_bit_rate.state_class == "measurement"
+    coordinator.get_interface.assert_called_with("root", "iot_vlan")
+
+    record["alias"] = ""
+    record["tx_bytes_per_second"] = None
+    record["tx_bits_per_second"] = None
+
+    assert not next(entity for entity in entities if entity.name == "Alias").available
+    assert not tx_data_rate.available
+    assert not tx_bit_rate.available
+
+    coordinator.interface_data_available = False
+
+    assert not entities[0].available
+
+    non_root_entities = create_interface_entities(
+        coordinator,
+        "lab",
+        "iot_vlan",
+        "FGT123",
+        "TestGate",
+    )
+    assert non_root_entities[0].unique_id == "FGT123_interface_lab::iot_vlan_name"
+    assert non_root_entities[0].device_info["identifiers"] == {
+        ("fortios_kd", "FGT123_interface_lab::iot_vlan")
+    }
+
+
 def test_ap_network_entities_expose_dashboard_matching_metadata() -> None:
     """Test AP management IP and board MAC entities can enrich ARP rows."""
     from custom_components.fortios_kd.sensor import (  # noqa: PLC0415
@@ -472,6 +656,325 @@ def test_dhcp_entities_mask_mac_and_hostnames() -> None:
     assert values["DHCP MAC Address"] == "aa:bb:cc:**:**:**"
     assert values["DHCP Hostnames"] == "Test*****"
     assert values["WiFi Client Match"] == "Othe******"
+
+
+def test_detected_device_entities_expose_selected_fields_and_last_seen() -> None:
+    """Test detected-device diagnostics and privacy masking."""
+    from custom_components.fortios_kd.sensor import (  # noqa: PLC0415
+        create_detected_device_entities,
+    )
+
+    mac = "aa:bb:cc:dd:ee:ff"
+    last_seen_at = datetime.now(UTC) - timedelta(days=2)
+    record = {
+        "mac": mac,
+        "master_mac": mac,
+        "host": {"name": "Lab-Camera", "src": "dhcp"},
+        "os": {"name": "ExampleOS", "src": "http"},
+        "hardware_vendor": "Example Vendor",
+        "hardware_vendor_source": "fortiguard",
+        "oui_vendor": "Example Devices Ltd",
+        "vendor_identification_assessment": ("FortiGuard identification may be wrong"),
+        "hardware_type": "IoT",
+        "hardware_type_source": "fortiguard",
+        "hardware_family": "IP Camera",
+        "hardware_family_source": "fortiguard",
+        "hardware_version": "Model One",
+        "hardware_version_source": "fortiguard",
+        "software_version": "1.2.3",
+        "software_version_source": "http",
+        "addr": "192.0.2.50",
+        "addr6": "2001:db8::50",
+        "interface": "iot_vlan",
+        "last_seen": 345950,
+        "last_seen_at": last_seen_at,
+    }
+    coordinator = Mock()
+    coordinator.last_update_success = True
+    coordinator.device_inventory_data_available = True
+    coordinator.get_detected_device.return_value = record
+    coordinator.get_detected_device_change.return_value = None
+
+    entities = create_detected_device_entities(
+        coordinator,
+        mac,
+        "FGT123",
+        "TestGate",
+        True,
+        True,
+    )
+    entities_by_name = {entity.name: entity for entity in entities}
+    values = {name: entity.native_value for name, entity in entities_by_name.items()}
+    details = entities_by_name["Device details"]
+    last_seen = entities_by_name["Last seen"]
+
+    assert all(
+        not entity.entity_registry_enabled_default
+        for entity in entities
+        if entity.__class__.__name__ == "FortiGateDetectedDeviceMetric"
+    )
+
+    assert details.native_value == "Lab-******"
+    assert details.device_info["identifiers"] == {
+        ("fortios_kd", f"FGT123_detected_device_{mac}")
+    }
+    assert details.device_info["via_device"] == ("fortios_kd", "FGT123")
+    assert details.device_info["manufacturer"] == "Example Vendor"
+    assert details.device_info["model"] == "IP Camera"
+    assert details.device_info["hw_version"] == "Model One"
+    assert details.device_info["sw_version"] == "1.2.3"
+    assert details.extra_state_attributes == {
+        "fortios_kd_entry_type": "detected_device",
+        "fortios_kd_device_field": "details",
+        "fortios_kd_match_id": sha256(
+            f"fortios_kd\0FGT123\0{mac}".encode()
+        ).hexdigest(),
+        "mac_address": "aa:bb:cc:**:**:**",
+        "master_mac_address": "aa:bb:cc:**:**:**",
+        "hostname": "Lab-******",
+        "hostname_source": "dhcp",
+        "ipv4_address": "192.0.2.50",
+        "ipv6_address": "2001:db8::50",
+        "interface": "iot_vlan",
+        "operating_system": "ExampleOS",
+        "operating_system_source": "http",
+        "hardware_vendor": "Example Vendor",
+        "hardware_vendor_source": "fortiguard",
+        "oui_vendor": "Example Devices Ltd",
+        "vendor_identification_assessment": ("FortiGuard identification may be wrong"),
+        "hardware_type": "IoT",
+        "hardware_type_source": "fortiguard",
+        "hardware_family": "IP Camera",
+        "hardware_family_source": "fortiguard",
+        "hardware_version": "Model One",
+        "hardware_version_source": "fortiguard",
+        "software_version": "1.2.3",
+        "software_version_source": "http",
+    }
+    assert values == {
+        "Device details": "Lab-******",
+        "MAC address": "aa:bb:cc:**:**:**",
+        "Master MAC address": "aa:bb:cc:**:**:**",
+        "Hostname": "Lab-******",
+        "Hostname source": "dhcp",
+        "IP address": "192.0.2.50",
+        "IPv6 address": "2001:db8::50",
+        "Interface": "iot_vlan",
+        "Operating system": "ExampleOS",
+        "Operating system source": "http",
+        "Hardware vendor": "Example Vendor",
+        "Hardware vendor source": "fortiguard",
+        "OUI-derived vendor": "Example Devices Ltd",
+        "Vendor identification assessment": ("FortiGuard identification may be wrong"),
+        "Hardware type": "IoT",
+        "Hardware type source": "fortiguard",
+        "Hardware family": "IP Camera",
+        "Hardware family source": "fortiguard",
+        "Hardware version": "Model One",
+        "Hardware version source": "fortiguard",
+        "Software version": "1.2.3",
+        "Software version source": "http",
+        "Last seen": last_seen_at,
+        "Observation status": "Stale",
+        "Inventory changes": "No changes observed",
+        "Last inventory change": None,
+    }
+    assert last_seen.native_value == last_seen_at
+    assert not entities_by_name["Last inventory change"].available
+    assert all(
+        entity.available
+        for name, entity in entities_by_name.items()
+        if name != "Last inventory change"
+    )
+
+
+def test_detected_device_entities_report_latest_inventory_change() -> None:
+    """Test change diagnostics retain field names and timestamp, not old values."""
+    from custom_components.fortios_kd.sensor import (  # noqa: PLC0415
+        create_detected_device_entities,
+    )
+
+    changed_at = datetime(2026, 9, 20, 12, 30, tzinfo=UTC)
+    coordinator = Mock()
+    coordinator.last_update_success = True
+    coordinator.device_inventory_data_available = True
+    coordinator.get_detected_device.return_value = {
+        "mac": "aa:bb:cc:dd:ee:ff",
+        "last_seen_at": datetime.now(UTC),
+    }
+    coordinator.get_detected_device_change.return_value = {
+        "changed_fields": ["Hostname", "IP address"],
+        "changed_at": changed_at,
+    }
+
+    entities = create_detected_device_entities(
+        coordinator,
+        "aa:bb:cc:dd:ee:ff",
+        "FGT123",
+        "TestGate",
+        False,
+        False,
+    )
+    entities_by_name = {entity.name: entity for entity in entities}
+
+    assert entities_by_name["Inventory changes"].native_value == (
+        "Hostname, IP address"
+    )
+    assert entities_by_name["Last inventory change"].native_value == changed_at
+    assert entities_by_name["Last inventory change"].available
+    assert entities_by_name["Observation status"].native_value == "Recently seen"
+
+
+def test_dhcp_hostname_falls_back_to_detected_device_inventory() -> None:
+    """Test a missing DHCP hostname uses the exact inventory hostname."""
+    from custom_components.fortios_kd.sensor import (  # noqa: PLC0415
+        create_dhcp_entities,
+    )
+
+    mac = "aa:bb:cc:dd:ee:ff"
+    coordinator = Mock()
+    coordinator.last_update_success = True
+    coordinator.dhcp_data_available = True
+    coordinator.sync_device_inventory = True
+    coordinator.get_dhcp_entries.return_value = [
+        {"mac": mac, "ip": "192.0.2.10", "hostname": ""}
+    ]
+    coordinator.get_wifi_client.return_value = None
+    coordinator.get_detected_device_hostname.return_value = (
+        "InventoryPhone",
+        "dns",
+    )
+    coordinator.get_detected_device.return_value = {
+        "mac": mac,
+        "host": {"name": "InventoryPhone", "src": "dns"},
+        "hardware_vendor": "Example Vendor",
+        "hardware_family": "Example Family",
+        "hardware_version": "Model One",
+        "software_version": "1.2.3",
+    }
+
+    entities = create_dhcp_entities(
+        coordinator,
+        mac,
+        "FGT123",
+        "TestGate",
+        False,
+        False,
+    )
+    entities_by_name = {entity.name: entity for entity in entities}
+    hostname = entities_by_name["DHCP Hostnames"]
+    detected_match = entities_by_name["Detected Device Match"]
+
+    assert hostname.native_value == "InventoryPhone (Device Info)"
+    assert hostname.extra_state_attributes["fortios_kd_hostname_source"] == (
+        "device_info"
+    )
+    assert detected_match.native_value == "InventoryPhone"
+    assert detected_match.extra_state_attributes["hostname_source"] == "dns"
+    assert detected_match.device_info["manufacturer"] == "Example Vendor"
+    assert detected_match.device_info["model"] == "Example Family"
+
+
+def test_inventory_enriches_arp_and_wifi_devices_with_exact_mac_match() -> None:
+    """Test ARP and wifi devices receive metadata and match diagnostics."""
+    from custom_components.fortios_kd.sensor import (  # noqa: PLC0415
+        create_arp_entities,
+        create_wifi_client_entities,
+    )
+
+    mac = "aa:bb:cc:dd:ee:ff"
+    record = {
+        "mac": mac,
+        "host": {"name": "InventoryPhone", "src": "dns"},
+        "os": {"name": "ExampleOS", "src": "http"},
+        "hardware_vendor": "Example Vendor",
+        "hardware_type": "Phone",
+        "hardware_family": "Example Family",
+        "hardware_version": "Model One",
+        "software_version": "1.2.3",
+        "addr": "192.0.2.10",
+        "addr6": "2001:db8::10",
+        "interface": "lan",
+    }
+    coordinator = Mock()
+    coordinator.last_update_success = True
+    coordinator.sync_device_inventory = True
+    coordinator.sync_dhcp_leases = False
+    coordinator.match_arp_wifi_clients = False
+    coordinator.device_inventory_data_available = True
+    coordinator.get_detected_device.return_value = record
+    coordinator.get_arp_entries.return_value = [
+        {"mac": mac, "ip": "192.0.2.10", "interface": "lan"}
+    ]
+    coordinator.get_arp_entries_by_ip.return_value = [
+        {"mac": mac, "ip": "192.0.2.10", "interface": "lan"}
+    ]
+
+    arp_entities = create_arp_entities(
+        coordinator,
+        mac,
+        "FGT123",
+        "TestGate",
+        False,
+    )
+    wifi_entities = create_wifi_client_entities(
+        coordinator,
+        {"mac": mac, "hostname": "WifiPhone"},
+        "FGT123",
+        "TestGate",
+        {
+            "mac": False,
+            "hostname": False,
+            "ssid": False,
+            "vlan_id": False,
+            "wtp_name": False,
+        },
+    )
+
+    for entities in (arp_entities, wifi_entities):
+        match = next(
+            entity for entity in entities if entity.name == "Detected Device Match"
+        )
+        assert match.native_value == "InventoryPhone"
+        assert match.extra_state_attributes["ipv6_address"] == "2001:db8::10"
+        assert match.extra_state_attributes["hardware_type"] == "Phone"
+        assert match.extra_state_attributes["hardware_family"] == "Example Family"
+        assert match.device_info["manufacturer"] == "Example Vendor"
+        assert match.device_info["model"] == "Example Family"
+
+    assert arp_entities[0].device_info["hw_version"] == "Model One"
+    assert wifi_entities[0].device_info["sw_version"] == "1.2.3"
+
+
+def test_wifi_hostname_falls_back_to_detected_device_inventory() -> None:
+    """Test device inventory supplies a hostname only when wifi has none."""
+    from custom_components.fortios_kd.sensor import (  # noqa: PLC0415
+        FortiGateWiFiClientMetric,
+    )
+
+    mac = "aa:bb:cc:dd:ee:ff"
+    coordinator = Mock()
+    coordinator.last_update_success = True
+    coordinator.get_wifi_client.return_value = {"mac": mac, "hostname": ""}
+    coordinator.get_detected_device_hostname.return_value = ("InventoryPhone", "dns")
+    entity = FortiGateWiFiClientMetric(
+        coordinator,
+        {"mac": mac},
+        "FGT123",
+        "hostname",
+        "Hostname",
+        "mdi:form-textbox",
+    )
+
+    assert entity.native_value == "InventoryPhone"
+    assert entity.extra_state_attributes == {"fortios_kd_hostname_source": "dns"}
+
+    coordinator.get_wifi_client.return_value = {
+        "mac": mac,
+        "hostname": "WifiPhone",
+    }
+    assert entity.native_value == "WifiPhone"
+    assert entity.extra_state_attributes == {"fortios_kd_hostname_source": "wifi"}
 
 
 def test_arp_entities_use_separate_device_and_aggregate_rows() -> None:

@@ -24,6 +24,8 @@ CONF_INCLUDE_UNASSIGNED_SSIDS = "include_unassigned_ssids"
 CONF_SYNC_ARP_TABLE = "sync_arp_table"
 CONF_MATCH_ARP_WIFI_CLIENTS = "match_arp_wifi_clients"
 CONF_SYNC_DHCP_LEASES = "sync_dhcp_leases"
+CONF_SYNC_DEVICE_INVENTORY = "sync_device_inventory"
+CONF_SYNC_INTERFACES = "sync_interfaces"
 CONF_SNMP_COMMUNITY = "snmp_community"
 CONF_SNMP_PORT = "snmp_port"
 CONF_REQUEST_TIMEOUT = "request_timeout"
@@ -69,6 +71,8 @@ async def test_user_flow(
             CONF_SYNC_ARP_TABLE: False,
             CONF_MATCH_ARP_WIFI_CLIENTS: True,
             CONF_SYNC_DHCP_LEASES: False,
+            CONF_SYNC_DEVICE_INVENTORY: False,
+            CONF_SYNC_INTERFACES: False,
             CONF_MASK_SERIAL_NUMBERS: True,
             CONF_MASK_SSIDS: True,
             CONF_MASK_CLIENT_MACS: True,
@@ -90,6 +94,8 @@ async def test_user_flow(
         CONF_SYNC_ARP_TABLE: False,
         CONF_MATCH_ARP_WIFI_CLIENTS: True,
         CONF_SYNC_DHCP_LEASES: False,
+        CONF_SYNC_DEVICE_INVENTORY: False,
+        CONF_SYNC_INTERFACES: False,
         CONF_ORGANIZATION_MODE: "none",
         CONF_MASK_SERIAL_NUMBERS: True,
         CONF_MASK_SSIDS: True,

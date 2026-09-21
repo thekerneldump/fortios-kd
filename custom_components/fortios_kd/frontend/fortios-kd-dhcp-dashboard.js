@@ -82,6 +82,7 @@ function dhcpModel(hass) {
     currentStateValue(hass, "select.dhcp_entries_interface_filter") ||
     FILTER_ALL;
   const wifiClientsByMatchId = new Map();
+  const detectedDevicesByMatchId = new Map();
   const entriesByDevice = new Map();
 
   for (const state of Object.values(hass.states)) {
@@ -94,6 +95,18 @@ function dhcpModel(hass) {
       const matchId = state.attributes.fortios_kd_match_id;
       if (matchId && state.entity_id.endsWith("_mac_address")) {
         wifiClientsByMatchId.set(matchId, entity.device_id);
+      }
+      continue;
+    }
+
+    if (state.attributes.fortios_kd_entry_type === "detected_device") {
+      const matchId = state.attributes.fortios_kd_match_id;
+      if (
+        matchId &&
+        state.attributes.fortios_kd_device_field === "details" &&
+        isCurrent(state)
+      ) {
+        detectedDevicesByMatchId.set(matchId, entity.device_id);
       }
       continue;
     }
@@ -161,6 +174,9 @@ function dhcpModel(hass) {
       isCurrent(matchState) && matchState.state !== "Not currently detected"
         ? wifiClientsByMatchId.get(entry.matchId)
         : undefined;
+    const detectedDeviceId = entry.matchId
+      ? detectedDevicesByMatchId.get(entry.matchId)
+      : undefined;
 
     entries.push({
       ...entry,
@@ -170,6 +186,7 @@ function dhcpModel(hass) {
       macAddress,
       title,
       wifiDeviceId,
+      detectedDeviceId,
     });
   }
 
@@ -223,6 +240,19 @@ function dhcpModel(hass) {
       });
     }
 
+    if (entry.detectedDeviceId) {
+      rows.push({
+        type: "button",
+        name: "Matched detected device",
+        icon: "mdi:devices",
+        action_name: "Open detected device",
+        tap_action: {
+          action: "navigate",
+          navigation_path: `/config/devices/device/${entry.detectedDeviceId}`,
+        },
+      });
+    }
+
     for (const [field, label] of [
       ["mac_address", "MAC address"],
       ["ip_addresses", "IP addresses"],
@@ -234,6 +264,7 @@ function dhcpModel(hass) {
       ["address_types", "Address types"],
       ["server_mkeys", "Server IDs"],
       ["wifi_client_match", "WiFi client match"],
+      ["detected_device_match", "Detected device match"],
     ]) {
       const state = entry.fields.get(field);
       if (state) {
@@ -248,6 +279,7 @@ function dhcpModel(hass) {
       entry.fortigateDevice?.id || "",
       entry.fortigateName,
       entry.wifiDeviceId || "",
+      entry.detectedDeviceId || "",
     );
     cards.push({ type: "entities", title: entry.title, entities: rows });
   }

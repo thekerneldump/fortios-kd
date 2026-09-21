@@ -39,7 +39,9 @@ from .const import (
     CONF_SNMP_COMMUNITY,
     CONF_SNMP_PORT,
     CONF_SYNC_ARP_TABLE,
+    CONF_SYNC_DEVICE_INVENTORY,
     CONF_SYNC_DHCP_LEASES,
+    CONF_SYNC_INTERFACES,
     DEFAULT_CLIENTS_FOLLOW_AP_AREA,
     DEFAULT_CLIENTS_FOLLOW_AP_LABELS,
     DEFAULT_DEVICES_FOLLOW_HUB_LABELS,
@@ -59,7 +61,9 @@ from .const import (
     DEFAULT_SNMP_PORT,
     DEFAULT_SNMP_TIMEOUT,
     DEFAULT_SYNC_ARP_TABLE,
+    DEFAULT_SYNC_DEVICE_INVENTORY,
     DEFAULT_SYNC_DHCP_LEASES,
+    DEFAULT_SYNC_INTERFACES,
     DEFAULT_VERIFY_SSL,
     DOMAIN,
     ORGANIZATION_MODE_AREA,
@@ -107,6 +111,14 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Optional(
             CONF_SYNC_DHCP_LEASES,
             default=DEFAULT_SYNC_DHCP_LEASES,
+        ): selector.BooleanSelector(),
+        vol.Optional(
+            CONF_SYNC_DEVICE_INVENTORY,
+            default=DEFAULT_SYNC_DEVICE_INVENTORY,
+        ): selector.BooleanSelector(),
+        vol.Optional(
+            CONF_SYNC_INTERFACES,
+            default=DEFAULT_SYNC_INTERFACES,
         ): selector.BooleanSelector(),
         vol.Optional(
             CONF_ORGANIZATION_MODE,
@@ -280,6 +292,7 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for FortiOS-KD."""
 
     VERSION = 1
+    MINOR_VERSION = 2
 
     _pending_data: dict[str, Any]
     _pending_version: FortiOSVersion

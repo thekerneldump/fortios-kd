@@ -18,11 +18,19 @@ FRONTEND_ARP_TABLE_URL = "/fortios_kd/fortios-kd-arp-table-dashboard.js"
 FRONTEND_ARP_TABLE_PATH = (
     Path(__file__).parent / "frontend" / "fortios-kd-arp-table-dashboard.js"
 )
+FRONTEND_DEVICE_TABLE_URL = "/fortios_kd/fortios-kd-device-table-dashboard.js"
+FRONTEND_DEVICE_TABLE_PATH = (
+    Path(__file__).parent / "frontend" / "fortios-kd-device-table-dashboard.js"
+)
 FRONTEND_DHCP_URL = "/fortios_kd/fortios-kd-dhcp-dashboard.js"
 FRONTEND_DHCP_PATH = Path(__file__).parent / "frontend" / "fortios-kd-dhcp-dashboard.js"
 FRONTEND_VDOM_RESOURCES_URL = "/fortios_kd/fortios-kd-vdom-resources-dashboard.js"
 FRONTEND_VDOM_RESOURCES_PATH = (
     Path(__file__).parent / "frontend" / "fortios-kd-vdom-resources-dashboard.js"
+)
+FRONTEND_INTERFACE_GRAPHS_URL = "/fortios_kd/fortios-kd-interface-graphs-dashboard.js"
+FRONTEND_INTERFACE_GRAPHS_PATH = (
+    Path(__file__).parent / "frontend" / "fortios-kd-interface-graphs-dashboard.js"
 )
 FRONTEND_PREFERRED_NAMES_URL = "/fortios_kd/fortios-kd-preferred-names.js"
 FRONTEND_PREFERRED_NAMES_PATH = (
@@ -37,8 +45,10 @@ FRONTEND_ASSETS = {
     FRONTEND_GRAPH_URL: FRONTEND_GRAPH_PATH,
     FRONTEND_ARP_URL: FRONTEND_ARP_PATH,
     FRONTEND_ARP_TABLE_URL: FRONTEND_ARP_TABLE_PATH,
+    FRONTEND_DEVICE_TABLE_URL: FRONTEND_DEVICE_TABLE_PATH,
     FRONTEND_DHCP_URL: FRONTEND_DHCP_PATH,
     FRONTEND_VDOM_RESOURCES_URL: FRONTEND_VDOM_RESOURCES_PATH,
+    FRONTEND_INTERFACE_GRAPHS_URL: FRONTEND_INTERFACE_GRAPHS_PATH,
     FRONTEND_PREFERRED_NAMES_URL: FRONTEND_PREFERRED_NAMES_PATH,
     FRONTEND_LOADER_URL: FRONTEND_LOADER_PATH,
 }

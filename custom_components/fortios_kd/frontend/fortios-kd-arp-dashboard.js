@@ -58,24 +58,45 @@ function isCurrent(state) {
 
 function arpModel(hass) {
   const preferredNames = preferredNamesByDevice(hass);
+  const detectedDevicesByMatchId = new Map();
   const entriesByDevice = new Map();
 
   for (const state of Object.values(hass.states)) {
+    const entity = registryEntry(hass.entities, state.entity_id);
+    if (!entity?.device_id) {
+      continue;
+    }
+
+    if (state.attributes.fortios_kd_entry_type === "detected_device") {
+      const matchId = state.attributes.fortios_kd_match_id;
+      if (
+        matchId &&
+        state.attributes.fortios_kd_device_field === "details" &&
+        isCurrent(state)
+      ) {
+        detectedDevicesByMatchId.set(matchId, entity.device_id);
+      }
+      continue;
+    }
+
     if (state.attributes.fortios_kd_entry_type !== "arp_entry") {
       continue;
     }
 
     const field = state.attributes.fortios_kd_arp_field;
-    const entity = registryEntry(hass.entities, state.entity_id);
-    if (!field || !entity?.device_id) {
+    if (!field) {
       continue;
     }
 
     const entry = entriesByDevice.get(entity.device_id) || {
       deviceId: entity.device_id,
       fields: new Map(),
+      matchId: undefined,
     };
     entry.fields.set(field, state);
+    if (field === "mac_address") {
+      entry.matchId = state.attributes.fortios_kd_match_id;
+    }
     entriesByDevice.set(entity.device_id, entry);
   }
 
@@ -115,6 +136,9 @@ function arpModel(hass) {
         "FortiGate",
       ),
       title,
+      detectedDeviceId: entry.matchId
+        ? detectedDevicesByMatchId.get(entry.matchId)
+        : undefined,
     });
   }
 
@@ -155,6 +179,19 @@ function arpModel(hass) {
       });
     }
 
+    if (entry.detectedDeviceId) {
+      rows.push({
+        type: "button",
+        name: "Matched detected device",
+        icon: "mdi:devices",
+        action_name: "Open detected device",
+        tap_action: {
+          action: "navigate",
+          navigation_path: `/config/devices/device/${entry.detectedDeviceId}`,
+        },
+      });
+    }
+
     for (const [field, label] of [
       ["mac_address", "MAC address"],
       ["ip_addresses", "IP addresses"],
@@ -163,6 +200,7 @@ function arpModel(hass) {
       ["vdoms", "VDOMs"],
       ["wifi_client_match", "WiFi client match"],
       ["ip_conflict", "IP conflict"],
+      ["detected_device_match", "Detected device match"],
     ]) {
       const state = entry.fields.get(field);
       if (state) {
@@ -176,6 +214,7 @@ function arpModel(hass) {
       entry.title,
       entry.fortigateDevice?.id || "",
       entry.fortigateName,
+      entry.detectedDeviceId || "",
     );
     cards.push({ type: "entities", title: entry.title, entities: rows });
   }

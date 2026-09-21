@@ -34,6 +34,7 @@ def _mock_coordinator(access_point: str, ssid: str) -> Mock:
     coordinator.async_add_listener.return_value = Mock()
     coordinator.sync_arp_table = True
     coordinator.sync_dhcp_leases = True
+    coordinator.sync_device_inventory = True
     coordinator.arp_macs = {"aa:bb:cc:dd:ee:ff"}
     coordinator.get_arp_entries.return_value = [
         {
@@ -51,7 +52,38 @@ def _mock_coordinator(access_point: str, ssid: str) -> Mock:
         }
     ]
     coordinator.dhcp_macs = {"aa:bb:cc:dd:ee:ff"}
+    coordinator.detected_device_macs = {"aa:bb:cc:dd:ee:ff"}
+    coordinator.get_detected_device.return_value = {
+        "mac": "aa:bb:cc:dd:ee:ff",
+        "os": {"name": "ExampleOS"},
+        "hardware_vendor": "Example Vendor",
+        "hardware_type": "Example Type",
+        "hardware_family": "Example Family",
+        "software_version": "1.2.3",
+        "interface": "lan",
+    }
     coordinator.vdom_names = {"root"}
+    coordinator.interface_keys = {("root", "lan"), ("root", vap_name)}
+
+    def get_interface(_vdom_name: str, interface_name: str) -> dict[str, Any]:
+        if interface_name == vap_name:
+            return {
+                "name": vap_name,
+                "vdom": "root",
+                "link": True,
+                "speed": 0,
+                "duplex": 0,
+            }
+        return {
+            "name": "lan",
+            "vdom": "root",
+            "link": True,
+            "speed": 1000,
+            "duplex": 1,
+            "interface": "port1",
+        }
+
+    coordinator.get_interface.side_effect = get_interface
     return coordinator
 
 
@@ -183,18 +215,24 @@ async def test_preferred_name_updates_filters_and_active_selections(hass: Any) -
     manager.select_fortigate("FortiGate80E")
     manager.select_arp_fortigate("FortiGate80E")
     manager.select_dhcp_fortigate("FortiGate80E")
+    manager.select_device_fortigate("FortiGate80E")
     manager.select_vdom_fortigate("FortiGate80E")
+    manager.select_interface_fortigate("FortiGate80E")
 
     manager.update_hub_name("entry-a", "OfficeGate80E")
 
     assert manager.fortigate_options == ["All", "OfficeGate80E"]
     assert manager.arp_fortigate_options == ["All", "OfficeGate80E"]
     assert manager.dhcp_fortigate_options == ["All", "OfficeGate80E"]
+    assert manager.device_fortigate_options == ["All", "OfficeGate80E"]
     assert manager.vdom_fortigate_options == ["All", "OfficeGate80E"]
+    assert manager.interface_fortigate_options == ["All", "OfficeGate80E"]
     assert manager.selected_fortigate == "OfficeGate80E"
     assert manager.selected_arp_fortigate == "OfficeGate80E"
     assert manager.selected_dhcp_fortigate == "OfficeGate80E"
+    assert manager.selected_device_fortigate == "OfficeGate80E"
     assert manager.selected_vdom_fortigate == "OfficeGate80E"
+    assert manager.selected_interface_fortigate == "OfficeGate80E"
 
 
 async def test_live_updates_masking_and_ownership(hass: Any) -> None:
@@ -389,6 +427,61 @@ async def test_fortios_62_automatic_tunnel_assignment(hass: Any) -> None:
     ]
 
 
+async def test_device_filters_are_scoped_by_fortigate(hass: Any) -> None:
+    """Test selecting a FortiGate scopes and resets device-table filters."""
+    from custom_components.fortios_kd.filter_manager import (  # noqa: PLC0415
+        FILTER_ALL,
+        FortiOSKDFilterManager,
+    )
+
+    alpha = _mock_coordinator("OfficeAP", "OfficeWifi")
+    alpha.get_detected_device.return_value = {
+        "hardware_vendor": "Alpha Vendor",
+        "hardware_type": "Alpha Type",
+        "hardware_family": "Alpha Family",
+        "os": {"name": "AlphaOS"},
+        "software_version": "1.0",
+        "interface": "alpha_lan",
+    }
+    beta = _mock_coordinator("YardAP", "YardWifi")
+    beta.get_detected_device.return_value = {
+        "hardware_vendor": "Beta Vendor",
+        "hardware_type": "Beta Type",
+        "hardware_family": "Beta Family",
+        "os": {"name": "BetaOS"},
+        "software_version": "2.0",
+        "interface": "beta_lan",
+    }
+
+    manager = FortiOSKDFilterManager(hass)
+    _register_hub(manager, "entry-a", "AlphaGate", alpha)
+    _register_hub(manager, "entry-b", "BetaGate", beta)
+
+    assert manager.device_hardware_vendor_options == [
+        FILTER_ALL,
+        "Alpha Vendor",
+        "Beta Vendor",
+    ]
+    manager.select_device_fortigate("AlphaGate")
+    assert manager.device_hardware_vendor_options == [FILTER_ALL, "Alpha Vendor"]
+    assert manager.device_hardware_type_options == [FILTER_ALL, "Alpha Type"]
+    assert manager.device_hardware_family_options == [FILTER_ALL, "Alpha Family"]
+    assert manager.device_operating_system_options == [FILTER_ALL, "AlphaOS"]
+    assert manager.device_software_version_options == [FILTER_ALL, "1.0"]
+    assert manager.device_interface_options == [FILTER_ALL, "alpha_lan"]
+
+    manager.select_device_hardware_vendor("Alpha Vendor")
+    manager.select_device_hardware_type("Alpha Type")
+    manager.select_device_hardware_family("Alpha Family")
+    manager.select_device_last_seen("More than 1 day ago")
+    manager.select_device_fortigate("BetaGate")
+    assert manager.selected_device_hardware_vendor == FILTER_ALL
+    assert manager.selected_device_hardware_type == FILTER_ALL
+    assert manager.selected_device_hardware_family == FILTER_ALL
+    assert manager.selected_device_last_seen == FILTER_ALL
+    assert manager.device_hardware_vendor_options == [FILTER_ALL, "Beta Vendor"]
+
+
 async def test_select_entities(hass: Any) -> None:
     """Test the shared select entities and their dependent options."""
     from custom_components.fortios_kd.const import (  # noqa: PLC0415
@@ -435,7 +528,7 @@ async def test_select_entities(hass: Any) -> None:
         labels={label.label_id},
     )
 
-    assert len(entities) == 15
+    assert len(entities) == 29
     (
         fortigate,
         access_point,
@@ -448,10 +541,24 @@ async def test_select_entities(hass: Any) -> None:
         arp_lease_type,
         dhcp_fortigate,
         dhcp_interface,
+        device_fortigate,
+        device_hardware_vendor,
+        device_hardware_type,
+        device_hardware_family,
+        device_operating_system,
+        device_software_version,
+        device_interface,
+        device_last_seen,
         vdom_fortigate,
         vdom_filter,
         vdom_graph_layout,
         vdom_time_span,
+        interface_fortigate,
+        interface_link,
+        interface_speed_duplex,
+        interface_parent,
+        interface_graph_layout,
+        interface_time_span,
     ) = entities
     assert fortigate.options == ["All", "AlphaGate", "BetaGate"]
 
@@ -496,6 +603,45 @@ async def test_select_entities(hass: Any) -> None:
     assert manager.selected_dhcp_fortigate == "AlphaGate"
     assert manager.selected_dhcp_interface == "lan"
 
+    assert device_fortigate.options == ["All", "AlphaGate", "BetaGate"]
+    await device_fortigate.async_select_option("AlphaGate")
+    assert manager.selected_device_fortigate == "AlphaGate"
+    assert device_hardware_vendor.options == ["All", "Example Vendor"]
+    assert device_hardware_type.options == ["All", "Example Type"]
+    assert device_hardware_family.options == ["All", "Example Family"]
+    assert device_operating_system.options == ["All", "ExampleOS"]
+    assert device_software_version.options == ["All", "1.2.3"]
+    assert device_interface.options == ["All", "lan"]
+    assert device_last_seen.options == [
+        "All",
+        "Less than 1 hour ago",
+        "Less than 1 day ago",
+        "Less than 1 week ago",
+        "Less than 1 month ago",
+        "Less than 1 year ago",
+        "More than 1 hour ago",
+        "More than 1 day ago",
+        "More than 1 week ago",
+        "More than 1 month ago",
+        "More than 1 year ago",
+    ]
+    await device_hardware_vendor.async_select_option("Example Vendor")
+    await device_hardware_type.async_select_option("Example Type")
+    await device_hardware_family.async_select_option("Example Family")
+    await device_operating_system.async_select_option("ExampleOS")
+    await device_software_version.async_select_option("1.2.3")
+    await device_interface.async_select_option("lan")
+    await device_last_seen.async_select_option("Less than 1 week ago")
+    assert manager.selected_device_hardware_vendor == "Example Vendor"
+    assert manager.selected_device_hardware_type == "Example Type"
+    assert manager.selected_device_hardware_family == "Example Family"
+    assert manager.selected_device_operating_system == "ExampleOS"
+    assert manager.selected_device_software_version == "1.2.3"
+    assert manager.selected_device_interface == "lan"
+    assert manager.selected_device_last_seen == "Less than 1 week ago"
+    await device_last_seen.async_select_option("More than 1 month ago")
+    assert manager.selected_device_last_seen == "More than 1 month ago"
+
     assert vdom_fortigate.options == ["All", "AlphaGate", "BetaGate"]
     await vdom_fortigate.async_select_option("AlphaGate")
     assert vdom_filter.options == ["All", "root"]
@@ -521,6 +667,42 @@ async def test_select_entities(hass: Any) -> None:
     assert vdom_time_span.current_option == "1 hour"
     await vdom_time_span.async_select_option("30 min")
     assert manager.selected_vdom_time_span == "30 min"
+
+    assert interface_fortigate.options == ["All", "AlphaGate", "BetaGate"]
+    await interface_fortigate.async_select_option("AlphaGate")
+    assert manager.selected_interface_fortigate == "AlphaGate"
+    assert interface_link.options == ["All", "Up"]
+    assert interface_speed_duplex.options == [
+        "All",
+        "0 Mbps / Half",
+        "1000 Mbps / Full",
+    ]
+    assert interface_parent.options == ["All", "port1"]
+    await interface_link.async_select_option("Up")
+    await interface_speed_duplex.async_select_option("1000 Mbps / Full")
+    await interface_parent.async_select_option("port1")
+    assert manager.selected_interface_link == "Up"
+    assert manager.selected_interface_speed_duplex == "1000 Mbps / Full"
+    assert manager.selected_interface_parent == "port1"
+    assert interface_graph_layout.options == [
+        "Combined by rate",
+        "Separated by firewall",
+    ]
+    assert interface_graph_layout.current_option == "Combined by rate"
+    await interface_graph_layout.async_select_option("Separated by firewall")
+    assert manager.selected_interface_graph_layout == "Separated by firewall"
+    assert interface_time_span.options == [
+        "1 week",
+        "1 day",
+        "12 hours",
+        "6 hours",
+        "3 hours",
+        "1 hour",
+        "30 min",
+    ]
+    assert interface_time_span.current_option == "1 hour"
+    await interface_time_span.async_select_option("3 hours")
+    assert manager.selected_interface_time_span == "3 hours"
 
     duplicate_entities: list[Any] = []
     await async_setup_entry(

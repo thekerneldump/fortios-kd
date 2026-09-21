@@ -5,23 +5,145 @@ import logging
 from time import monotonic
 from typing import Any
 
-from aiohttp import ClientError
+from aiohttp import ClientError, ClientResponseError
+import aiooui
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import FortiOSApi
 from .api.version import version_family
-from .const import RADIO_SPECTRUM_BANDS, RADIO_TYPE_BANDS
+from .const import (
+    INTERFACE_KIND_HARDWARE_SWITCH_MEMBER,
+    INTERFACE_KIND_NETWORK,
+    INTERFACE_KIND_WIFI_SSID,
+    RADIO_SPECTRUM_BANDS,
+    RADIO_TYPE_BANDS,
+)
 from .repairs import async_create_snmp_arp_issue, async_delete_snmp_arp_issue
 from .snmp_arp import FortiOSKDSnmpArpClient, SnmpArpError
 
 _LOGGER = logging.getLogger(__name__)
 _VDOM_REFRESH_INTERVAL_SECONDS = 300
 _DNS_CONFIGURATION_REFRESH_INTERVAL_SECONDS = 300
+_DEVICE_INVENTORY_REFRESH_INTERVAL_SECONDS = 300
+_INTERFACE_METADATA_REFRESH_INTERVAL_SECONDS = 1800
 _DNS_LATENCY_MAX_AGE = timedelta(hours=1)
 
 DNSServerKey = tuple[str, str]
+InterfaceKey = tuple[str, str]
+
+_DETECTED_DEVICE_CHANGE_FIELDS = {
+    "Hostname": ("host", "name"),
+    "MAC address": ("mac",),
+    "Master MAC address": ("master_mac",),
+    "IP address": ("addr",),
+    "IPv6 address": ("addr6",),
+    "Interface": ("interface",),
+    "Operating system": ("os", "name"),
+    "Hardware vendor": ("hardware_vendor",),
+    "Hardware type": ("hardware_type",),
+    "Hardware family": ("hardware_family",),
+    "Hardware version": ("hardware_version",),
+    "Software version": ("software_version",),
+}
+
+
+def interface_identifier(
+    fortigate_serial: str,
+    vdom_name: str,
+    interface_name: str,
+) -> str:
+    """Return a stable interface identifier while preserving existing root IDs."""
+    if vdom_name == "root":
+        return f"{fortigate_serial}_interface_{interface_name}"
+    return f"{fortigate_serial}_interface_{vdom_name}::{interface_name}"
+
+
+def interface_kind(
+    data: dict[str, Any],
+    interface_name: str,
+    vdom_name: str | None = None,
+) -> str:
+    """Classify configured WiFi VAP interfaces without zero-value heuristics."""
+    available_interfaces = data.get("available_interfaces")
+    available_results = (
+        available_interfaces.get("results")
+        if isinstance(available_interfaces, dict)
+        else []
+    )
+    if isinstance(available_results, list):
+        for interface in available_results:
+            if (
+                not isinstance(interface, dict)
+                or interface.get("name") != interface_name
+                or (
+                    vdom_name is not None
+                    and interface.get("vdom") not in (None, vdom_name)
+                )
+            ):
+                continue
+            if interface.get("is_hardware_switch_member") is True:
+                return INTERFACE_KIND_HARDWARE_SWITCH_MEMBER
+            if interface.get("is_wifi") is True:
+                return INTERFACE_KIND_WIFI_SSID
+
+    configured_vaps = data.get("configured_vaps")
+    results = (
+        configured_vaps.get("results") if isinstance(configured_vaps, dict) else []
+    )
+    if isinstance(results, list) and any(
+        isinstance(vap, dict) and vap.get("name") == interface_name for vap in results
+    ):
+        return INTERFACE_KIND_WIFI_SSID
+    return INTERFACE_KIND_NETWORK
+
+
+def _available_interface_results(
+    response: dict[str, Any] | list[Any],
+) -> list[dict[str, Any]] | None:
+    """Flatten multi-VDOM interface metadata and merge duplicate records."""
+    envelopes = response if isinstance(response, list) else [response]
+    records: dict[InterfaceKey, dict[str, Any]] = {}
+    response_shape_valid = False
+
+    for envelope in envelopes:
+        if not isinstance(envelope, dict):
+            continue
+        envelope_vdom = envelope.get("vdom")
+        results = envelope.get("results")
+        if not isinstance(results, list):
+            continue
+        response_shape_valid = True
+
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            vdom_name = item.get("vdom") or envelope_vdom
+            if (
+                not isinstance(name, str)
+                or not name
+                or not isinstance(vdom_name, str)
+                or not vdom_name
+            ):
+                continue
+            record = records.setdefault((vdom_name, name), {})
+            record.update(item)
+            record["name"] = name
+            record["vdom"] = vdom_name
+
+    return [records[key] for key in sorted(records)] if response_shape_valid else None
+
+
+def _detected_device_field(record: dict[str, Any], path: tuple[str, ...]) -> Any:
+    """Return a nested detected-device value for change comparison."""
+    value: Any = record
+    for field in path:
+        if not isinstance(value, dict):
+            return None
+        value = value.get(field)
+    return value
 
 
 def normalize_mac_address(value: Any) -> str | None:
@@ -40,6 +162,141 @@ def normalize_mac_address(value: Any) -> str | None:
         return None
 
     return ":".join(compact[index : index + 2] for index in range(0, 12, 2))
+
+
+def _oui_vendor(mac: str) -> str | None:
+    """Return the packaged IEEE OUI vendor when the database is loaded."""
+    first_octet = int(mac[:2], 16)
+    if first_octet & 0b11:
+        return None
+    if not aiooui.is_loaded():
+        return None
+    return aiooui.get_vendor(mac)
+
+
+def _normalized_vendor_name(value: Any) -> str | None:
+    """Normalize vendor names for a conservative identity comparison."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+
+    ignored_suffixes = {
+        "co",
+        "company",
+        "corp",
+        "corporation",
+        "inc",
+        "incorporated",
+        "limited",
+        "llc",
+        "ltd",
+    }
+    tokens = [
+        token
+        for token in "".join(
+            character.casefold() if character.isalnum() else " " for character in value
+        ).split()
+        if token not in ignored_suffixes
+    ]
+    return "".join(tokens) or None
+
+
+def _vendor_identification_assessment(device: dict[str, Any]) -> str:
+    """Compare a FortiGuard vendor classification with the MAC OUI vendor."""
+    oui_vendor = _normalized_vendor_name(device.get("oui_vendor"))
+    if oui_vendor is None:
+        return "OUI vendor unavailable"
+
+    source = device.get("hardware_vendor_source")
+    if not isinstance(source, str) or source.casefold() != "fortiguard":
+        return "Not a FortiGuard classification"
+
+    fortiguard_vendor = _normalized_vendor_name(device.get("hardware_vendor"))
+    if fortiguard_vendor is None:
+        return "FortiGuard vendor unavailable"
+
+    if fortiguard_vendor in oui_vendor or oui_vendor in fortiguard_vendor:
+        return "FortiGuard and OUI agree"
+    return "FortiGuard identification may be wrong"
+
+
+def _detected_device_results(
+    response: dict[str, Any],
+    observed_at: datetime,
+) -> list[dict[str, Any]] | None:
+    """Normalize detected devices and calculate their last-seen timestamps."""
+    results = response.get("results")
+    if not isinstance(results, list):
+        return None
+
+    devices: list[dict[str, Any]] = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+
+        mac = normalize_mac_address(item.get("mac"))
+        if mac is None:
+            continue
+
+        device = {**item, "mac": mac}
+        if oui_vendor := _oui_vendor(mac):
+            device["oui_vendor"] = oui_vendor
+        device["vendor_identification_assessment"] = _vendor_identification_assessment(
+            device
+        )
+        master_mac = normalize_mac_address(item.get("master_mac"))
+        if master_mac is not None:
+            device["master_mac"] = master_mac
+
+        last_seen = item.get("last_seen")
+        if (
+            isinstance(last_seen, (int, float))
+            and not isinstance(last_seen, bool)
+            and last_seen >= 0
+        ):
+            device["last_seen_at"] = (
+                observed_at - timedelta(seconds=last_seen)
+            ).replace(microsecond=0)
+
+        devices.append(device)
+
+    return devices
+
+
+def _interface_results(
+    response: dict[str, Any] | list[Any],
+) -> list[dict[str, Any]] | None:
+    """Normalize single- and multi-VDOM interface response shapes."""
+    responses = response if isinstance(response, list) else [response]
+    if not responses and isinstance(response, list):
+        return []
+
+    interfaces: list[dict[str, Any]] = []
+    for item in responses:
+        if not isinstance(item, dict):
+            return None
+
+        vdom_name = item.get("vdom")
+        results = item.get("results")
+        if (
+            not isinstance(vdom_name, str)
+            or not vdom_name
+            or not isinstance(results, dict)
+        ):
+            return None
+
+        for fallback_name, record in results.items():
+            if (
+                not isinstance(fallback_name, str)
+                or not fallback_name
+                or not isinstance(record, dict)
+            ):
+                continue
+            name = record.get("name") or fallback_name
+            if not isinstance(name, str) or not name:
+                continue
+            interfaces.append({**record, "name": name, "vdom": vdom_name})
+
+    return interfaces
 
 
 def _vdom_results(response: dict[str, Any] | list[Any]) -> list[dict[str, Any]] | None:
@@ -240,6 +497,8 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         sync_arp_table: bool = False,
         match_arp_wifi_clients: bool = True,
         sync_dhcp_leases: bool = False,
+        sync_device_inventory: bool = False,
+        sync_interfaces: bool = False,
         snmp_arp_client: FortiOSKDSnmpArpClient | None = None,
     ) -> None:
         """Initialize the FortiGate coordinator."""
@@ -256,6 +515,8 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.sync_arp_table = sync_arp_table
         self.match_arp_wifi_clients = match_arp_wifi_clients
         self.sync_dhcp_leases = sync_dhcp_leases
+        self.sync_device_inventory = sync_device_inventory
+        self.sync_interfaces = sync_interfaces
         self._snmp_arp_client = snmp_arp_client
         self._radio_counters: dict[tuple[str, int, str], tuple[int, float]] = {}
         self._wifi_clients_by_mac: dict[str, dict[str, Any]] = {}
@@ -264,6 +525,12 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._arp_entries_by_ip: dict[str, list[dict[str, Any]]] = {}
         self._dhcp_entries_by_mac: dict[str, list[dict[str, Any]]] = {}
         self._dhcp_entries_by_ip: dict[str, list[dict[str, Any]]] = {}
+        self._detected_devices_by_mac: dict[str, dict[str, Any]] = {}
+        self._detected_devices_by_ip: dict[str, list[dict[str, Any]]] = {}
+        self._detected_device_changes: dict[str, dict[str, Any]] = {}
+        self._detected_device_inventory_indexed = False
+        self._interface_counters: dict[tuple[str, str, str], tuple[int, float]] = {}
+        self._interfaces_by_key: dict[InterfaceKey, dict[str, Any]] = {}
         self._arp_supported = bool(
             sync_arp_table
             and (client.supports_network_arp or snmp_arp_client is not None)
@@ -275,6 +542,24 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._arp_error_logged = False
         self._dhcp_leases: dict[str, Any] = {"results": [], "available": False}
         self._dhcp_error_logged = False
+        self._device_inventory: dict[str, Any] = {
+            "results": [],
+            "available": False,
+        }
+        self._device_inventory_error_logged = False
+        self._device_inventory_updated_at: float | None = None
+        self._interfaces: dict[str, Any] = {
+            "results": [],
+            "available": False,
+        }
+        self._interfaces_error_logged = False
+        self._interface_wildcard_supported: bool | None = None
+        self._available_interfaces: dict[str, Any] = {
+            "results": [],
+            "available": False,
+        }
+        self._available_interfaces_error_logged = False
+        self._available_interfaces_updated_at: float | None = None
         self._vdoms: dict[str, Any] = {"results": [], "available": False}
         self._vdom_resources: dict[str, Any] = {
             "results": {},
@@ -344,6 +629,46 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return current DHCP leases claiming an IP address."""
         return self._dhcp_entries_by_ip.get(ip_address, [])
 
+    def get_detected_device(self, mac: str) -> dict[str, Any] | None:
+        """Return the current detected-device record for a MAC address."""
+        normalized_mac = normalize_mac_address(mac)
+        if normalized_mac is None:
+            return None
+        return self._detected_devices_by_mac.get(normalized_mac)
+
+    def get_detected_devices_by_ip(self, ip_address: str) -> list[dict[str, Any]]:
+        """Return current detected-device records claiming an IP address."""
+        return self._detected_devices_by_ip.get(ip_address, [])
+
+    def get_detected_device_hostname(self, mac: str) -> tuple[str, str | None] | None:
+        """Return a detected-device hostname and its discovery source."""
+        device = self.get_detected_device(mac)
+        host = device.get("host") if device is not None else None
+        if not isinstance(host, dict):
+            return None
+
+        hostname = host.get("name")
+        if not isinstance(hostname, str) or not hostname.strip():
+            return None
+
+        source = host.get("src")
+        return hostname.strip(), source if isinstance(source, str) and source else None
+
+    def get_detected_device_change(self, mac: str) -> dict[str, Any] | None:
+        """Return the most recently observed inventory change for a MAC."""
+        normalized_mac = normalize_mac_address(mac)
+        if normalized_mac is None:
+            return None
+        return self._detected_device_changes.get(normalized_mac)
+
+    def get_interface(
+        self,
+        vdom_name: str,
+        interface_name: str,
+    ) -> dict[str, Any] | None:
+        """Return current statistics for one VDOM-scoped interface."""
+        return self._interfaces_by_key.get((vdom_name, interface_name))
+
     @property
     def arp_macs(self) -> set[str]:
         """Return MAC addresses currently present in the ARP table."""
@@ -355,9 +680,29 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return set(self._dhcp_entries_by_mac)
 
     @property
+    def detected_device_macs(self) -> set[str]:
+        """Return MAC addresses currently present in device inventory."""
+        return set(self._detected_devices_by_mac)
+
+    @property
+    def interface_keys(self) -> set[InterfaceKey]:
+        """Return VDOM and interface-name pairs from the latest response."""
+        return set(self._interfaces_by_key)
+
+    @property
     def dhcp_data_available(self) -> bool:
         """Return whether a valid DHCP response has been received."""
         return bool(self._dhcp_leases.get("available"))
+
+    @property
+    def device_inventory_data_available(self) -> bool:
+        """Return whether a valid detected-device response has been received."""
+        return bool(self._device_inventory.get("available"))
+
+    @property
+    def interface_data_available(self) -> bool:
+        """Return whether valid multi-VDOM interface statistics were received."""
+        return bool(self._interfaces.get("available"))
 
     @property
     def vdom_names(self) -> set[str]:
@@ -781,6 +1126,173 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._dhcp_leases = {**response, "results": results, "available": True}
         return self._dhcp_leases
 
+    async def _async_get_interfaces(self) -> dict[str, Any]:
+        """Return all-VDOM interface statistics with calculated rates."""
+        if not self.sync_interfaces:
+            return self._interfaces
+
+        results: list[dict[str, Any]] | None = None
+        if self._interface_wildcard_supported is not False:
+            try:
+                response = await self.client.monitor.system.get_interfaces()
+            except ClientResponseError as err:
+                if err.status != 400:
+                    if not self._interfaces_error_logged:
+                        _LOGGER.warning(
+                            "Unable to load FortiGate interface statistics: %s",
+                            err,
+                        )
+                        self._interfaces_error_logged = True
+                    return self._interfaces
+                self._interface_wildcard_supported = False
+                _LOGGER.info(
+                    "FortiGate rejected the all-VDOM interface request; "
+                    "polling each VDOM separately"
+                )
+            except (ClientError, TimeoutError) as err:
+                if not self._interfaces_error_logged:
+                    _LOGGER.warning(
+                        "Unable to load FortiGate interface statistics: %s", err
+                    )
+                    self._interfaces_error_logged = True
+                return self._interfaces
+            else:
+                results = _interface_results(response)
+                self._interface_wildcard_supported = results is not None
+
+        if self._interface_wildcard_supported is False:
+            responses: list[dict[str, Any]] = []
+            for vdom_name in sorted(self.vdom_names or {"root"}):
+                try:
+                    response = await self.client.monitor.system.get_interfaces(
+                        vdom_name
+                    )
+                except (ClientError, TimeoutError) as err:
+                    if not self._interfaces_error_logged:
+                        _LOGGER.warning(
+                            "Unable to load FortiGate interface statistics for "
+                            "VDOM %s: %s",
+                            vdom_name,
+                            err,
+                        )
+                        self._interfaces_error_logged = True
+                    continue
+
+                if isinstance(response, dict):
+                    responses.append({**response, "vdom": vdom_name})
+
+            results = _interface_results(responses) if responses else None
+
+        if results is None:
+            if not self._interfaces_error_logged:
+                _LOGGER.warning("FortiGate interface response has no per-VDOM results")
+                self._interfaces_error_logged = True
+            return self._interfaces
+
+        self._add_interface_rates(results)
+        self._interfaces_by_key = {
+            (record["vdom"], record["name"]): record for record in results
+        }
+        self._interfaces_error_logged = False
+        self._interfaces = {
+            "results": results,
+            "available": True,
+        }
+        return self._interfaces
+
+    async def _async_get_available_interfaces(self) -> dict[str, Any]:
+        """Return slowly changing interface relationships with a long cache."""
+        if not self.sync_interfaces:
+            return self._available_interfaces
+
+        now = monotonic()
+        if (
+            self._available_interfaces_updated_at is not None
+            and now - self._available_interfaces_updated_at
+            < _INTERFACE_METADATA_REFRESH_INTERVAL_SECONDS
+        ):
+            return self._available_interfaces
+
+        try:
+            response = await self.client.monitor.system.get_available_interfaces()
+        except (ClientError, TimeoutError) as err:
+            if not self._available_interfaces_error_logged:
+                _LOGGER.warning(
+                    "Unable to load FortiGate interface relationships: %s",
+                    err,
+                )
+                self._available_interfaces_error_logged = True
+            return self._available_interfaces
+
+        results = _available_interface_results(response)
+        if results is None:
+            if not self._available_interfaces_error_logged:
+                _LOGGER.warning(
+                    "FortiGate available-interface response has no results list"
+                )
+                self._available_interfaces_error_logged = True
+            return self._available_interfaces
+
+        self._available_interfaces_error_logged = False
+        self._available_interfaces_updated_at = now
+        self._available_interfaces = {"results": results, "available": True}
+        return self._available_interfaces
+
+    def _add_interface_rates(
+        self,
+        interfaces: list[dict[str, Any]],
+    ) -> None:
+        """Calculate per-second rates from cumulative interface counters."""
+        sample_time = monotonic()
+        observed_keys: set[tuple[str, str, str]] = set()
+        rate_fields = {
+            "tx_packets": "tx_packets_per_second",
+            "rx_packets": "rx_packets_per_second",
+            "tx_bytes": "tx_bytes_per_second",
+            "rx_bytes": "rx_bytes_per_second",
+            "tx_errors": "tx_errors_per_second",
+            "rx_errors": "rx_errors_per_second",
+        }
+
+        for interface in interfaces:
+            vdom_name = interface["vdom"]
+            interface_name = interface["name"]
+            for counter_field, rate_field in rate_fields.items():
+                interface[rate_field] = None
+                bit_rate_field = (
+                    rate_field.replace("bytes", "bits")
+                    if counter_field in {"tx_bytes", "rx_bytes"}
+                    else None
+                )
+                if bit_rate_field is not None:
+                    interface[bit_rate_field] = None
+                current_value = interface.get(counter_field)
+                if not isinstance(current_value, int) or isinstance(
+                    current_value, bool
+                ):
+                    continue
+
+                key = (vdom_name, interface_name, counter_field)
+                observed_keys.add(key)
+                previous = self._interface_counters.get(key)
+                if previous is not None:
+                    previous_value, previous_time = previous
+                    elapsed = sample_time - previous_time
+                    if current_value >= previous_value and elapsed > 0:
+                        interface[rate_field] = (
+                            current_value - previous_value
+                        ) / elapsed
+                        if bit_rate_field is not None:
+                            interface[bit_rate_field] = interface[rate_field] * 8
+
+                self._interface_counters[key] = (current_value, sample_time)
+
+        self._interface_counters = {
+            key: sample
+            for key, sample in self._interface_counters.items()
+            if key in observed_keys
+        }
+
     def _index_dhcp_entries(self, dhcp_leases: dict[str, Any]) -> None:
         """Index valid DHCP leases by canonical MAC and IP address."""
         entries_by_mac: dict[str, list[dict[str, Any]]] = {}
@@ -801,6 +1313,90 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self._dhcp_entries_by_mac = entries_by_mac
         self._dhcp_entries_by_ip = entries_by_ip
+
+    async def _async_get_device_inventory(self) -> dict[str, Any]:
+        """Return detected devices, retaining the last valid response on errors."""
+        if not self.sync_device_inventory:
+            return self._device_inventory
+
+        current_time = monotonic()
+        if (
+            self._device_inventory.get("available")
+            and self._device_inventory_updated_at is not None
+            and current_time - self._device_inventory_updated_at
+            < _DEVICE_INVENTORY_REFRESH_INTERVAL_SECONDS
+        ):
+            return self._device_inventory
+
+        observed_at = datetime.now(UTC)
+        try:
+            response = await self.client.monitor.user.get_devices()
+        except (ClientError, TimeoutError) as err:
+            if not self._device_inventory_error_logged:
+                _LOGGER.warning("Unable to load FortiGate device inventory: %s", err)
+                self._device_inventory_error_logged = True
+            return self._device_inventory
+
+        results = _detected_device_results(response, observed_at)
+        if results is None:
+            if not self._device_inventory_error_logged:
+                _LOGGER.warning(
+                    "FortiGate detected-device response has no results list"
+                )
+                self._device_inventory_error_logged = True
+            return self._device_inventory
+
+        self._device_inventory_error_logged = False
+        self._device_inventory = {
+            **response,
+            "results": results,
+            "available": True,
+        }
+        self._device_inventory_updated_at = current_time
+        return self._device_inventory
+
+    def _index_detected_devices(self, device_inventory: dict[str, Any]) -> None:
+        """Index detected devices by canonical MAC and IP addresses."""
+        previous_devices = self._detected_devices_by_mac
+        devices_by_mac: dict[str, dict[str, Any]] = {}
+        devices_by_ip: dict[str, list[dict[str, Any]]] = {}
+
+        for device in device_inventory.get("results", []):
+            if not isinstance(device, dict):
+                continue
+
+            mac = normalize_mac_address(device.get("mac"))
+            if mac is None:
+                continue
+
+            devices_by_mac[mac] = device
+            for field in ("addr", "addr6"):
+                ip_address = device.get(field)
+                if isinstance(ip_address, str) and ip_address:
+                    devices_by_ip.setdefault(ip_address, []).append(device)
+
+        if self._detected_device_inventory_indexed:
+            changed_at = datetime.now(UTC).replace(microsecond=0)
+            for mac, device in devices_by_mac.items():
+                previous = previous_devices.get(mac)
+                if previous is None:
+                    changed_fields = ["New device"]
+                else:
+                    changed_fields = [
+                        label
+                        for label, path in _DETECTED_DEVICE_CHANGE_FIELDS.items()
+                        if _detected_device_field(previous, path)
+                        != _detected_device_field(device, path)
+                    ]
+                if changed_fields:
+                    self._detected_device_changes[mac] = {
+                        "changed_fields": changed_fields,
+                        "changed_at": changed_at,
+                    }
+
+        self._detected_devices_by_mac = devices_by_mac
+        self._detected_devices_by_ip = devices_by_ip
+        self._detected_device_inventory_indexed = True
 
     async def _async_load_wifi_meta(self) -> None:
         """Load FortiGate wifi lookup tables once, retaining safe fallbacks."""
@@ -1048,7 +1644,10 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             wifi_clients = await self.client.monitor.wifi.get_clients()
             arp_table = await self._async_get_arp_table()
             dhcp_leases = await self._async_get_dhcp_leases()
+            device_inventory = await self._async_get_device_inventory()
             vdoms = await self._async_get_vdom_inventory()
+            interfaces = await self._async_get_interfaces()
+            available_interfaces = await self._async_get_available_interfaces()
             vdom_resources = await self._async_get_vdom_resources()
             dns_servers = await self._async_get_dns_servers()
             configured_vaps = await self.client.configuration.wifi.get_vaps()
@@ -1070,6 +1669,10 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._index_arp_entries(arp_table)
             data["dhcp_leases"] = dhcp_leases
             self._index_dhcp_entries(dhcp_leases)
+            data["interfaces"] = interfaces
+            data["available_interfaces"] = available_interfaces
+            data["device_inventory"] = device_inventory
+            self._index_detected_devices(device_inventory)
             data["vdoms"] = vdoms
             data["vdom_resources"] = vdom_resources
             data["dns_servers"] = dns_servers
