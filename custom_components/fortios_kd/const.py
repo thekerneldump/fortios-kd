@@ -4,6 +4,7 @@ DOMAIN = "fortios_kd"
 DATA_FILTER_MANAGER = "filter_manager"
 
 CONF_PREFERRED_NAME = "preferred_name"
+CONF_INTERFACE_PREFERRED_NAMES = "interface_preferred_names"
 
 DEFAULT_VERIFY_SSL = True
 
@@ -50,6 +51,15 @@ DEFAULT_SNMP_TIMEOUT = 5
 
 CONF_SYNC_DHCP_LEASES = "sync_dhcp_leases"
 DEFAULT_SYNC_DHCP_LEASES = False
+
+CONF_SYNC_DEVICE_INVENTORY = "sync_device_inventory"
+DEFAULT_SYNC_DEVICE_INVENTORY = False
+
+CONF_SYNC_INTERFACES = "sync_interfaces"
+DEFAULT_SYNC_INTERFACES = False
+INTERFACE_KIND_NETWORK = "Network interface"
+INTERFACE_KIND_HARDWARE_SWITCH_MEMBER = "Hardware switch member"
+INTERFACE_KIND_WIFI_SSID = "WiFi SSID interface"
 
 RADIO_SPECTRUM_BANDS = {
     "24ghz": "2.4 GHz",

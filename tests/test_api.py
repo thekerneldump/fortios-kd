@@ -1,9 +1,9 @@
 """Tests for the FortiOS-KD API."""
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, Mock, call, patch
 
-from aiohttp import ClientConnectionError
+from aiohttp import ClientConnectionError, ClientResponseError
 import pytest
 
 from homeassistant.components.frontend import DATA_EXTRA_MODULE_URL
@@ -37,6 +37,319 @@ def test_vdom_response_shape_normalization() -> None:
         == expected
     )
     assert _vdom_results({"results": expected}) == expected
+
+
+def test_detected_device_response_normalization() -> None:
+    """Test MAC normalization and last-seen age conversion."""
+    from custom_components.fortios_kd.coordinator import (  # noqa: PLC0415
+        _detected_device_results,
+    )
+
+    observed_at = datetime(2026, 9, 20, 20, 14, 50, tzinfo=UTC)
+    with patch(
+        "custom_components.fortios_kd.coordinator._oui_vendor",
+        return_value="Example Devices Ltd",
+    ):
+        results = _detected_device_results(
+            {
+                "results": [
+                    {
+                        "mac": "AA-BB-CC-DD-EE-FF",
+                        "master_mac": "AABB.CCDD.EEFF",
+                        "host": {"name": "LabCamera", "src": "dhcp"},
+                        "last_seen": 345950,
+                    },
+                    {"mac": "00:00:00:00:00:00", "last_seen": 0},
+                ]
+            },
+            observed_at,
+        )
+
+    assert results == [
+        {
+            "mac": "aa:bb:cc:dd:ee:ff",
+            "master_mac": "aa:bb:cc:dd:ee:ff",
+            "host": {"name": "LabCamera", "src": "dhcp"},
+            "oui_vendor": "Example Devices Ltd",
+            "vendor_identification_assessment": "Not a FortiGuard classification",
+            "last_seen": 345950,
+            "last_seen_at": datetime(2026, 9, 16, 20, 9, tzinfo=UTC),
+        }
+    ]
+    assert _detected_device_results({"results": {}}, observed_at) is None
+
+
+def test_vendor_identification_assessment_is_conservative() -> None:
+    """Test OUI comparisons warn only for a FortiGuard-sourced mismatch."""
+    from custom_components.fortios_kd.coordinator import (  # noqa: PLC0415
+        _vendor_identification_assessment,
+    )
+
+    assert (
+        _vendor_identification_assessment(
+            {
+                "oui_vendor": "Apple, Inc.",
+                "hardware_vendor": "Apple",
+                "hardware_vendor_source": "fortiguard",
+            }
+        )
+        == "FortiGuard and OUI agree"
+    )
+    assert (
+        _vendor_identification_assessment(
+            {
+                "oui_vendor": "Raspberry Pi Trading Ltd",
+                "hardware_vendor": "Apple",
+                "hardware_vendor_source": "fortiguard",
+            }
+        )
+        == "FortiGuard identification may be wrong"
+    )
+    assert (
+        _vendor_identification_assessment(
+            {
+                "oui_vendor": "Raspberry Pi Trading Ltd",
+                "hardware_vendor": "Apple",
+                "hardware_vendor_source": "http",
+            }
+        )
+        == "Not a FortiGuard classification"
+    )
+
+
+def test_oui_vendor_skips_locally_administered_mac() -> None:
+    """Test randomized or locally administered MACs are not assigned vendors."""
+    from custom_components.fortios_kd.coordinator import _oui_vendor  # noqa: PLC0415
+
+    with (
+        patch("custom_components.fortios_kd.coordinator.aiooui.is_loaded") as loaded,
+        patch("custom_components.fortios_kd.coordinator.aiooui.get_vendor") as lookup,
+    ):
+        assert _oui_vendor("02:00:00:00:00:01") is None
+
+    loaded.assert_not_called()
+    lookup.assert_not_called()
+
+
+async def test_detected_device_inventory_uses_five_minute_cache(
+    hass: HomeAssistant,
+) -> None:
+    """Test repeated coordinator cycles do not refetch the large inventory."""
+    from custom_components.fortios_kd.coordinator import (  # noqa: PLC0415
+        FortiOSKDCoordinator,
+    )
+
+    client = Mock()
+    client.supports_network_arp = True
+    client.monitor.user.get_devices = AsyncMock(
+        return_value={
+            "results": [
+                {
+                    "mac": "AA-BB-CC-DD-EE-FF",
+                    "last_seen": 0,
+                }
+            ]
+        }
+    )
+    coordinator = FortiOSKDCoordinator(
+        hass,
+        client,
+        sync_device_inventory=True,
+    )
+
+    first = await coordinator._async_get_device_inventory()  # noqa: SLF001
+    second = await coordinator._async_get_device_inventory()  # noqa: SLF001
+
+    assert first is second
+    assert first["available"] is True
+    client.monitor.user.get_devices.assert_awaited_once_with()
+
+
+def test_interface_rates_use_counter_deltas_and_handle_resets(
+    hass: HomeAssistant,
+) -> None:
+    """Test interface rates derive from elapsed counter deltas."""
+    from custom_components.fortios_kd.coordinator import (  # noqa: PLC0415
+        FortiOSKDCoordinator,
+    )
+
+    client = Mock()
+    client.supports_network_arp = True
+    coordinator = FortiOSKDCoordinator(hass, client, sync_interfaces=True)
+    first = [
+        {
+            "name": "iot_vlan",
+            "vdom": "root",
+            "tx_packets": 100,
+            "rx_packets": 200,
+            "tx_bytes": 1_000_000,
+            "rx_bytes": 2_000_000,
+            "tx_errors": 1,
+            "rx_errors": 2,
+        },
+        {
+            "name": "iot_vlan",
+            "vdom": "lab",
+            "tx_packets": 1_000,
+        },
+    ]
+    second = [
+        {
+            "name": "iot_vlan",
+            "vdom": "root",
+            "tx_packets": 120,
+            "rx_packets": 250,
+            "tx_bytes": 3_000_000,
+            "rx_bytes": 6_000_000,
+            "tx_errors": 3,
+            "rx_errors": 3,
+        },
+        {
+            "name": "iot_vlan",
+            "vdom": "lab",
+            "tx_packets": 1_005,
+        },
+    ]
+
+    with patch(
+        "custom_components.fortios_kd.coordinator.monotonic",
+        side_effect=[100.0, 102.0, 104.0],
+    ):
+        coordinator._add_interface_rates(first)  # noqa: SLF001
+        coordinator._add_interface_rates(second)  # noqa: SLF001
+        reset = [{"name": "iot_vlan", "vdom": "root", "tx_packets": 5}]
+        coordinator._add_interface_rates(reset)  # noqa: SLF001
+
+    assert first[0]["tx_packets_per_second"] is None
+    assert second[0]["tx_packets_per_second"] == 10
+    assert second[0]["rx_packets_per_second"] == 25
+    assert second[0]["tx_bytes_per_second"] == 1_000_000
+    assert second[0]["rx_bytes_per_second"] == 2_000_000
+    assert second[0]["tx_bits_per_second"] == 8_000_000
+    assert second[0]["rx_bits_per_second"] == 16_000_000
+    assert second[0]["tx_errors_per_second"] == 1
+    assert second[0]["rx_errors_per_second"] == 0.5
+    assert second[1]["tx_packets_per_second"] == 2.5
+    assert reset[0]["tx_packets_per_second"] is None
+
+
+def test_interface_response_shape_normalization() -> None:
+    """Test single- and multi-VDOM interface responses are flattened safely."""
+    from custom_components.fortios_kd.coordinator import (  # noqa: PLC0415
+        _interface_results,
+    )
+
+    root = {"vdom": "root", "results": {"wan1": {"speed": 1000}}}
+    lab = {
+        "vdom": "lab",
+        "results": {"wan1": {"name": "wan1", "speed": 100}},
+    }
+
+    assert _interface_results(root) == [{"name": "wan1", "speed": 1000, "vdom": "root"}]
+    assert _interface_results([lab, root]) == [
+        {"name": "wan1", "speed": 100, "vdom": "lab"},
+        {"name": "wan1", "speed": 1000, "vdom": "root"},
+    ]
+    assert _interface_results({"results": {}}) is None
+    assert _interface_results([{"vdom": "root", "results": []}]) is None
+
+
+def test_interface_kind_uses_configured_vap_names() -> None:
+    """Test interface metadata takes precedence over VAP-name fallback."""
+    from custom_components.fortios_kd.coordinator import (  # noqa: PLC0415
+        _available_interface_results,
+        interface_kind,
+    )
+
+    data = {
+        "available_interfaces": {
+            "results": [
+                {
+                    "name": "port3",
+                    "vdom": "root",
+                    "is_hardware_switch_member": True,
+                    "hardware_switch": "switch1",
+                },
+                {"name": "ExampleVAP", "vdom": "root", "is_wifi": True},
+            ]
+        },
+        "configured_vaps": {
+            "results": [
+                {"name": "FamilyFi", "ssid": "Family WiFi"},
+            ]
+        },
+    }
+
+    assert interface_kind(data, "port3", "root") == "Hardware switch member"
+    assert interface_kind(data, "ExampleVAP", "root") == "WiFi SSID interface"
+    assert interface_kind(data, "FamilyFi") == "WiFi SSID interface"
+    assert interface_kind(data, "family_vlan") == "Network interface"
+
+    normalized = _available_interface_results(
+        [
+            {
+                "vdom": "root",
+                "results": [
+                    {"name": "port3", "type": "physical"},
+                    {
+                        "name": "port3",
+                        "is_hardware_switch_member": True,
+                        "hardware_switch": "switch1",
+                    },
+                ],
+            }
+        ]
+    )
+    assert normalized == [
+        {
+            "name": "port3",
+            "type": "physical",
+            "vdom": "root",
+            "is_hardware_switch_member": True,
+            "hardware_switch": "switch1",
+        }
+    ]
+
+
+async def test_interface_polling_falls_back_to_each_vdom(
+    hass: HomeAssistant,
+) -> None:
+    """Test FortiOS duplicate-Etag failures trigger per-VDOM polling."""
+    from custom_components.fortios_kd.coordinator import (  # noqa: PLC0415
+        FortiOSKDCoordinator,
+    )
+
+    wildcard_error = ClientResponseError(
+        Mock(),
+        (),
+        status=400,
+        message="Duplicate 'Etag' header found.",
+    )
+    client = Mock()
+    client.supports_network_arp = True
+    client.monitor.system.get_interfaces = AsyncMock(
+        side_effect=[
+            wildcard_error,
+            {"results": {"wan1": {"speed": 100}}},
+            {"results": {"wan1": {"speed": 1000}}},
+        ]
+    )
+    coordinator = FortiOSKDCoordinator(hass, client, sync_interfaces=True)
+    coordinator._vdoms = {  # noqa: SLF001
+        "results": [{"name": "lab"}, {"name": "root"}],
+        "available": True,
+    }
+
+    result = await coordinator._async_get_interfaces()  # noqa: SLF001
+
+    assert client.monitor.system.get_interfaces.await_args_list == [
+        call(),
+        call("lab"),
+        call("root"),
+    ]
+    assert coordinator._interface_wildcard_supported is False  # noqa: SLF001
+    assert coordinator.interface_keys == {("lab", "wan1"), ("root", "wan1")}
+    assert [item["vdom"] for item in result["results"]] == ["lab", "root"]
 
 
 def test_vdom_resource_response_shape_normalization() -> None:
@@ -227,6 +540,101 @@ async def test_monitor_api(
             }
         ]
     }
+    interfaces = [
+        {
+            "vdom": "lab",
+            "results": {
+                "iot_vlan": {
+                    "id": "iot_vlan",
+                    "name": "iot_vlan",
+                    "alias": "Lab IoT devices",
+                    "ip": "198.51.100.1",
+                    "mask": 24,
+                    "link": True,
+                    "speed": 100,
+                    "duplex": 1,
+                    "tx_packets": 10,
+                    "rx_packets": 20,
+                    "tx_bytes": 100_000,
+                    "rx_bytes": 200_000,
+                    "tx_errors": 0,
+                    "rx_errors": 0,
+                    "vlanid": 202,
+                    "interface": "port2",
+                }
+            },
+        },
+        {
+            "vdom": "root",
+            "results": {
+                "iot_vlan": {
+                    "id": "iot_vlan",
+                    "name": "iot_vlan",
+                    "alias": "IoT devices",
+                    "mac": "00:00:00:00:00:00",
+                    "ip": "192.0.2.1",
+                    "mask": 24,
+                    "link": True,
+                    "speed": 1000,
+                    "duplex": 1,
+                    "tx_packets": 100,
+                    "rx_packets": 200,
+                    "tx_bytes": 1_000_000,
+                    "rx_bytes": 2_000_000,
+                    "tx_errors": 1,
+                    "rx_errors": 2,
+                    "vlanid": 102,
+                    "interface": "port1",
+                }
+            },
+        },
+    ]
+    available_interfaces = [
+        {
+            "vdom": "lab",
+            "results": [
+                {
+                    "name": "iot_vlan",
+                    "is_vlan": True,
+                    "vlan_interface": "port2",
+                }
+            ],
+        },
+        {
+            "vdom": "root",
+            "results": [
+                {
+                    "name": "iot_vlan",
+                    "is_vlan": True,
+                    "vlan_interface": "port1",
+                }
+            ],
+        },
+    ]
+    detected_devices = {
+        "results": [
+            {
+                "mac": "AA-BB-CC-DD-EE-FF",
+                "master_mac": "AA-BB-CC-DD-EE-FF",
+                "host": {"name": "TestPhone", "src": "dhcp"},
+                "os": {"name": "ExampleOS", "src": "http"},
+                "hardware_vendor": "Example Vendor",
+                "hardware_vendor_source": "fortiguard",
+                "hardware_type": "Phone",
+                "hardware_type_source": "http",
+                "hardware_family": "Example Family",
+                "hardware_family_source": "http",
+                "hardware_version": "Example Model",
+                "hardware_version_source": "http",
+                "software_version": "1.0",
+                "software_version_source": "http",
+                "addr": "192.0.2.50",
+                "addr6": "2001:db8::50",
+                "interface": "internal",
+                "last_seen": 10,
+            }
+        ]
+    }
     vdom_results = [
         {"name": "lab"},
         {"name": "root"},
@@ -402,6 +810,18 @@ async def test_monitor_api(
         json=dhcp_leases,
     )
     aioclient_mock.get(
+        f"{BASE_URL}/monitor/system/interface?include_vlan=true&vdom=*",
+        json=interfaces,
+    )
+    aioclient_mock.get(
+        f"{BASE_URL}/monitor/system/available-interfaces?vdom=*",
+        json=available_interfaces,
+    )
+    aioclient_mock.get(
+        f"{BASE_URL}/monitor/user/device",
+        json=detected_devices,
+    )
+    aioclient_mock.get(
         f"{BASE_URL}/cmdb/system/vdom?vdom=*",
         json=vdoms,
     )
@@ -436,6 +856,8 @@ async def test_monitor_api(
             "sync_arp_table": True,
             "match_arp_wifi_clients": True,
             "sync_dhcp_leases": True,
+            "sync_device_inventory": True,
+            "sync_interfaces": True,
         },
     )
     entry.add_to_hass(hass)
@@ -458,11 +880,20 @@ async def test_monitor_api(
         api.version.minor,
         api.version.patch,
     ) == (6, 4, 16)
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    detected_device = coordinator.get_detected_device("aa:bb:cc:dd:ee:ff")
+    assert detected_device is not None
+    assert detected_device["host"] == {"name": "TestPhone", "src": "dhcp"}
+    assert detected_device["addr6"] == "2001:db8::50"
+    assert detected_device["last_seen_at"].tzinfo is UTC
+    assert coordinator.get_detected_devices_by_ip("2001:db8::50") == [detected_device]
+    assert coordinator.get_detected_device_change("aa:bb:cc:dd:ee:ff") is None
     assert api.supports_network_arp
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     assert coordinator.sync_arp_table
     assert coordinator.match_arp_wifi_clients
     assert coordinator.sync_dhcp_leases
+    assert coordinator.sync_interfaces
     assert coordinator.data == {
         "results": [
             {
@@ -483,6 +914,55 @@ async def test_monitor_api(
         "wifi_clients": wifi_clients,
         "arp_table": {**arp_table, "supported": True},
         "dhcp_leases": {**dhcp_leases, "available": True},
+        "interfaces": {
+            "results": [
+                {
+                    **interfaces[0]["results"]["iot_vlan"],
+                    "vdom": "lab",
+                    "tx_packets_per_second": None,
+                    "rx_packets_per_second": None,
+                    "tx_bytes_per_second": None,
+                    "rx_bytes_per_second": None,
+                    "tx_bits_per_second": None,
+                    "rx_bits_per_second": None,
+                    "tx_errors_per_second": None,
+                    "rx_errors_per_second": None,
+                },
+                {
+                    **interfaces[1]["results"]["iot_vlan"],
+                    "vdom": "root",
+                    "tx_packets_per_second": None,
+                    "rx_packets_per_second": None,
+                    "tx_bytes_per_second": None,
+                    "rx_bytes_per_second": None,
+                    "tx_bits_per_second": None,
+                    "rx_bits_per_second": None,
+                    "tx_errors_per_second": None,
+                    "rx_errors_per_second": None,
+                },
+            ],
+            "available": True,
+        },
+        "available_interfaces": {
+            "results": [
+                {**available_interfaces[0]["results"][0], "vdom": "lab"},
+                {**available_interfaces[1]["results"][0], "vdom": "root"},
+            ],
+            "available": True,
+        },
+        "device_inventory": {
+            **detected_devices,
+            "results": [
+                {
+                    **detected_devices["results"][0],
+                    "mac": "aa:bb:cc:dd:ee:ff",
+                    "master_mac": "aa:bb:cc:dd:ee:ff",
+                    "vendor_identification_assessment": "OUI vendor unavailable",
+                    "last_seen_at": ANY,
+                }
+            ],
+            "available": True,
+        },
         "vdoms": {
             "results": vdom_results,
             "available": True,
@@ -543,6 +1023,16 @@ async def test_monitor_api(
     assert coordinator.get_wifi_client("aa:bb:cc:dd:ee:ff") == wifi_client
     assert coordinator.get_wifi_client("AA:BB:CC:DD:EE:FF") == wifi_client
     assert coordinator.get_wifi_client("00:00:00:00:00:00") is None
+    assert coordinator.interface_keys == {("lab", "iot_vlan"), ("root", "iot_vlan")}
+    assert coordinator.interface_data_available
+    assert (
+        coordinator.get_interface("lab", "iot_vlan")
+        == coordinator.data["interfaces"]["results"][0]
+    )
+    assert (
+        coordinator.get_interface("root", "iot_vlan")
+        == coordinator.data["interfaces"]["results"][1]
+    )
     assert coordinator.get_arp_entries("aa:bb:cc:dd:ee:ff") == [
         {
             **arp_table["results"][0],
@@ -586,6 +1076,30 @@ async def test_monitor_api(
         "fortios_kd_supported_channel_widths": ["20MHz", "40MHz"],
         "fortios_kd_dfs_channel": False,
     }
+
+    coordinator._index_detected_devices(  # noqa: SLF001
+        {
+            "results": [
+                {
+                    **detected_device,
+                    "host": {"name": "RenamedPhone", "src": "dhcp"},
+                    "addr": "192.0.2.51",
+                    "addr6": "2001:db8::51",
+                }
+            ]
+        }
+    )
+    change = coordinator.get_detected_device_change("aa:bb:cc:dd:ee:ff")
+    assert change is not None
+    assert change["changed_fields"] == [
+        "Hostname",
+        "IP address",
+        "IPv6 address",
+    ]
+    assert change["changed_at"].tzinfo is UTC
+    assert coordinator.get_detected_devices_by_ip("2001:db8::51") == [
+        coordinator.get_detected_device("aa:bb:cc:dd:ee:ff")
+    ]
 
 
 async def test_wifi_meta_failure_uses_fallback(hass: HomeAssistant) -> None:

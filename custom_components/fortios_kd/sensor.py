@@ -1,6 +1,7 @@
 """Sensor platform for FortiOS KD."""
 
 from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Any
 
@@ -42,7 +43,12 @@ from .const import (
     DEFAULT_MASK_VLAN_IDS,
     DOMAIN,
 )
-from .coordinator import FortiOSKDCoordinator, normalize_mac_address
+from .coordinator import (
+    FortiOSKDCoordinator,
+    interface_identifier,
+    interface_kind,
+    normalize_mac_address,
+)
 
 
 def mask_serial(serial: str) -> str:
@@ -127,6 +133,32 @@ def _dhcp_assignment_type(entries: Iterable[dict[str, Any]]) -> str:
     )
 
 
+def _detected_device_metadata(
+    coordinator: FortiOSKDCoordinator,
+    mac: str,
+) -> dict[str, str]:
+    """Return Home Assistant device metadata from an exact inventory match."""
+    record = coordinator.get_detected_device(mac)
+    if record is None:
+        return {}
+
+    metadata: dict[str, str] = {}
+    for target, source in (
+        ("manufacturer", "hardware_vendor"),
+        ("model", "hardware_family"),
+        ("hw_version", "hardware_version"),
+        ("sw_version", "software_version"),
+    ):
+        value = record.get(source)
+        if isinstance(value, str) and value.strip():
+            metadata[target] = value.strip()
+    if "model" not in metadata:
+        hardware_type = record.get("hardware_type")
+        if isinstance(hardware_type, str) and hardware_type.strip():
+            metadata["model"] = hardware_type.strip()
+    return metadata
+
+
 def _registered_wifi_client_macs(
     entries: Iterable[er.RegistryEntry],
     fortigate_serial: str,
@@ -203,6 +235,153 @@ def _registered_dhcp_macs(
             macs.add(normalized_mac)
 
     return macs
+
+
+def _registered_detected_device_macs(
+    entries: Iterable[er.RegistryEntry],
+    fortigate_serial: str,
+) -> set[str]:
+    """Return MACs represented by registered detected-device sensors."""
+    unique_id_prefix = f"{fortigate_serial}_detected_device_"
+    unique_id_suffix = "_details"
+    macs: set[str] = set()
+
+    for registry_entry in entries:
+        unique_id = registry_entry.unique_id
+        if (
+            registry_entry.domain != "sensor"
+            or registry_entry.platform != DOMAIN
+            or not unique_id.startswith(unique_id_prefix)
+            or not unique_id.endswith(unique_id_suffix)
+        ):
+            continue
+
+        mac = unique_id[len(unique_id_prefix) : -len(unique_id_suffix)]
+        if normalized_mac := normalize_mac_address(mac):
+            macs.add(normalized_mac)
+
+    return macs
+
+
+def _registered_interface_keys(
+    entries: Iterable[er.RegistryEntry],
+    fortigate_serial: str,
+) -> set[tuple[str, str]]:
+    """Return VDOM-scoped interfaces represented by registered name sensors."""
+    unique_id_prefix = f"{fortigate_serial}_interface_"
+    unique_id_suffix = "_name"
+    keys: set[tuple[str, str]] = set()
+
+    for registry_entry in entries:
+        unique_id = registry_entry.unique_id
+        if (
+            registry_entry.domain != "sensor"
+            or registry_entry.platform != DOMAIN
+            or not unique_id.startswith(unique_id_prefix)
+            or not unique_id.endswith(unique_id_suffix)
+        ):
+            continue
+
+        identity = unique_id[len(unique_id_prefix) : -len(unique_id_suffix)]
+        vdom_name, separator, interface_name = identity.partition("::")
+        if not separator:
+            vdom_name, interface_name = "root", identity
+        if vdom_name and interface_name:
+            keys.add((vdom_name, interface_name))
+
+    return keys
+
+
+def _known_detected_device_macs(
+    coordinator: FortiOSKDCoordinator,
+    entries: Iterable[er.RegistryEntry],
+    fortigate_serial: str,
+) -> set[str]:
+    """Return current and registered device-inventory MAC addresses."""
+    if not coordinator.sync_device_inventory:
+        return set()
+    return coordinator.detected_device_macs | _registered_detected_device_macs(
+        entries,
+        fortigate_serial,
+    )
+
+
+def _setup_detected_device_listener(
+    entry: ConfigEntry,
+    coordinator: FortiOSKDCoordinator,
+    known_macs: set[str],
+    async_add_entities: AddConfigEntryEntitiesCallback,
+    fortigate_serial: str,
+    fortigate_hostname: str,
+    mask_mac: bool,
+    mask_hostname: bool,
+) -> None:
+    """Add detected-device entities discovered after platform setup."""
+    if not coordinator.sync_device_inventory:
+        return
+
+    @callback
+    def _add_new_detected_devices() -> None:
+        new_entities: list[SensorEntity] = []
+
+        for normalized_mac in coordinator.detected_device_macs:
+            if normalized_mac in known_macs:
+                continue
+
+            known_macs.add(normalized_mac)
+            new_entities.extend(
+                create_detected_device_entities(
+                    coordinator,
+                    normalized_mac,
+                    fortigate_serial,
+                    fortigate_hostname,
+                    mask_mac,
+                    mask_hostname,
+                )
+            )
+
+        if new_entities:
+            async_add_entities(new_entities)
+
+    entry.async_on_unload(coordinator.async_add_listener(_add_new_detected_devices))
+
+
+def _setup_interface_listener(
+    entry: ConfigEntry,
+    coordinator: FortiOSKDCoordinator,
+    known_keys: set[tuple[str, str]],
+    async_add_entities: AddConfigEntryEntitiesCallback,
+    fortigate_serial: str,
+    fortigate_hostname: str,
+) -> None:
+    """Add interface entities discovered after platform setup."""
+    if not coordinator.sync_interfaces:
+        return
+
+    @callback
+    def _add_new_interfaces() -> None:
+        new_entities: list[SensorEntity] = []
+
+        for vdom_name, interface_name in coordinator.interface_keys:
+            key = (vdom_name, interface_name)
+            if key in known_keys:
+                continue
+
+            known_keys.add(key)
+            new_entities.extend(
+                create_interface_entities(
+                    coordinator,
+                    vdom_name,
+                    interface_name,
+                    fortigate_serial,
+                    fortigate_hostname,
+                )
+            )
+
+        if new_entities:
+            async_add_entities(new_entities)
+
+    entry.async_on_unload(coordinator.async_add_listener(_add_new_interfaces))
 
 
 async def async_setup_entry(
@@ -294,6 +473,21 @@ async def async_setup_entry(
     )
     known_dhcp_macs = current_dhcp_macs | registered_dhcp_macs
     dhcp_records = sorted(known_dhcp_macs)
+    known_detected_device_macs = _known_detected_device_macs(
+        coordinator,
+        registry_entries,
+        fortigate_serial,
+    )
+    detected_device_records = sorted(known_detected_device_macs)
+    current_interface_keys = (
+        coordinator.interface_keys if coordinator.sync_interfaces else set()
+    )
+    registered_interface_keys = (
+        _registered_interface_keys(registry_entries, fortigate_serial)
+        if coordinator.sync_interfaces
+        else set()
+    )
+    known_interface_keys = current_interface_keys | registered_interface_keys
     known_dns_server_keys = set(coordinator.dns_server_keys)
 
     async_add_entities(
@@ -376,6 +570,29 @@ async def async_setup_entry(
                     displayed_fortigate_hostname,
                     mask_client_macs,
                     mask_client_hostnames,
+                )
+            ),
+            *(
+                entity
+                for mac in detected_device_records
+                for entity in create_detected_device_entities(
+                    coordinator,
+                    mac,
+                    fortigate_serial,
+                    displayed_fortigate_hostname,
+                    mask_client_macs,
+                    mask_client_hostnames,
+                )
+            ),
+            *(
+                entity
+                for vdom_name, interface_name in sorted(known_interface_keys)
+                for entity in create_interface_entities(
+                    coordinator,
+                    vdom_name,
+                    interface_name,
+                    fortigate_serial,
+                    displayed_fortigate_hostname,
                 )
             ),
             *(
@@ -855,6 +1072,25 @@ async def async_setup_entry(
 
     if coordinator.sync_dhcp_leases:
         entry.async_on_unload(coordinator.async_add_listener(_add_new_dhcp_entries))
+
+    _setup_detected_device_listener(
+        entry,
+        coordinator,
+        known_detected_device_macs,
+        async_add_entities,
+        fortigate_serial,
+        displayed_fortigate_hostname,
+        mask_client_macs,
+        mask_client_hostnames,
+    )
+    _setup_interface_listener(
+        entry,
+        coordinator,
+        known_interface_keys,
+        async_add_entities,
+        fortigate_serial,
+        displayed_fortigate_hostname,
+    )
 
     device_registry = dr.async_get(hass)
 
@@ -1363,6 +1599,268 @@ class FortiGateChangedCoordinatorSensor(
 
         self._last_coordinator_state = current_state
         self.async_write_ha_state()
+
+
+class FortiGateInterfaceMetric(FortiGateChangedCoordinatorSensor):
+    """Represent one field from a root-VDOM FortiOS interface."""
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: FortiOSKDCoordinator,
+        vdom_name: str,
+        interface_name: str,
+        fortigate_serial: str,
+        fortigate_name: str,
+        field: str,
+        name: str,
+        icon: str,
+        *,
+        unit: str | None = None,
+        device_class: SensorDeviceClass | None = None,
+        state_class: SensorStateClass | None = None,
+        suggested_unit: str | None = None,
+        suggested_precision: int | None = None,
+    ) -> None:
+        """Initialize an interface diagnostic entity."""
+        super().__init__(coordinator)
+        self._vdom_name = vdom_name
+        self._interface_name = interface_name
+        self._field = field
+        interface_device_identifier = interface_identifier(
+            fortigate_serial,
+            vdom_name,
+            interface_name,
+        )
+
+        self._attr_unique_id = f"{interface_device_identifier}_{field}"
+        self._attr_name = name
+        self._attr_icon = icon
+        self._attr_native_unit_of_measurement = unit
+        self._attr_device_class = device_class
+        self._attr_state_class = state_class
+        self._attr_suggested_unit_of_measurement = suggested_unit
+        self._attr_suggested_display_precision = suggested_precision
+        self._attr_extra_state_attributes = {
+            "fortios_kd_entry_type": "interface",
+            "fortios_kd_interface_field": field,
+            "fortios_kd_interface": interface_name,
+            "fortios_kd_vdom": vdom_name,
+        }
+        if field.endswith("_per_second"):
+            self._attr_extra_state_attributes.update(
+                {
+                    "fortios_kd_metric": field,
+                    "fortios_kd_scope": "interface",
+                }
+            )
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, interface_device_identifier)},
+            name=f"Interface {interface_name} ({vdom_name}, {fortigate_name})",
+            manufacturer="Fortinet",
+            model="FortiOS Network Interface",
+            via_device=(DOMAIN, fortigate_serial),
+        )
+
+    def _value(self) -> Any:
+        """Return the normalized current field value."""
+        interface = self.coordinator.get_interface(
+            self._vdom_name,
+            self._interface_name,
+        )
+        if interface is None:
+            return None
+
+        if self._field == "kind":
+            return interface_kind(
+                self.coordinator.data or {},
+                self._interface_name,
+                self._vdom_name,
+            )
+        value = interface.get(self._field)
+        if self._field in {"alias", "interface", "ip"}:
+            return value.strip() if isinstance(value, str) and value.strip() else None
+        if self._field == "link":
+            return "Up" if value is True else "Down" if value is False else None
+        if self._field == "duplex":
+            return {-1: "Not applicable", 0: "Half", 1: "Full"}.get(value)
+        if self._field == "name":
+            return value.strip() if isinstance(value, str) and value.strip() else None
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return value
+        return None
+
+    @property
+    def available(self) -> bool:
+        """Return whether the interface and selected field are available."""
+        return (
+            super().available
+            and self.coordinator.interface_data_available
+            and self._value() is not None
+        )
+
+    @property
+    def native_value(self) -> Any:
+        """Return the current interface field."""
+        return self._value()
+
+
+def create_interface_entities(
+    coordinator: FortiOSKDCoordinator,
+    vdom_name: str,
+    interface_name: str,
+    fortigate_serial: str,
+    fortigate_name: str,
+) -> list[FortiGateInterfaceMetric]:
+    """Create diagnostic and calculated-rate sensors for one interface."""
+    definitions = (
+        ("name", "Name", "mdi:ethernet", None, None, None, None, None),
+        (
+            "kind",
+            "Interface kind",
+            "mdi:shape-outline",
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
+        ("alias", "Alias", "mdi:label-outline", None, None, None, None, None),
+        ("ip", "IP address", "mdi:ip", None, None, None, None, None),
+        ("mask", "Network mask", "mdi:ip-network", None, None, None, None, None),
+        ("link", "Link", "mdi:lan-connect", None, None, None, None, None),
+        (
+            "speed",
+            "Link speed",
+            "mdi:speedometer",
+            UnitOfDataRate.MEGABITS_PER_SECOND,
+            SensorDeviceClass.DATA_RATE,
+            SensorStateClass.MEASUREMENT,
+            None,
+            0,
+        ),
+        ("duplex", "Duplex", "mdi:swap-horizontal", None, None, None, None, None),
+        ("vlanid", "VLAN ID", "mdi:lan", None, None, None, None, None),
+        (
+            "interface",
+            "Parent interface",
+            "mdi:lan-pending",
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
+        (
+            "tx_packets_per_second",
+            "TX packet rate",
+            "mdi:upload-network-outline",
+            "packets/s",
+            None,
+            SensorStateClass.MEASUREMENT,
+            None,
+            2,
+        ),
+        (
+            "rx_packets_per_second",
+            "RX packet rate",
+            "mdi:download-network-outline",
+            "packets/s",
+            None,
+            SensorStateClass.MEASUREMENT,
+            None,
+            2,
+        ),
+        (
+            "tx_bytes_per_second",
+            "TX data rate",
+            "mdi:upload-network",
+            UnitOfDataRate.BYTES_PER_SECOND,
+            SensorDeviceClass.DATA_RATE,
+            SensorStateClass.MEASUREMENT,
+            UnitOfDataRate.MEGABYTES_PER_SECOND,
+            3,
+        ),
+        (
+            "rx_bytes_per_second",
+            "RX data rate",
+            "mdi:download-network",
+            UnitOfDataRate.BYTES_PER_SECOND,
+            SensorDeviceClass.DATA_RATE,
+            SensorStateClass.MEASUREMENT,
+            UnitOfDataRate.MEGABYTES_PER_SECOND,
+            3,
+        ),
+        (
+            "tx_bits_per_second",
+            "TX data rate (bits)",
+            "mdi:upload-network",
+            UnitOfDataRate.BITS_PER_SECOND,
+            SensorDeviceClass.DATA_RATE,
+            SensorStateClass.MEASUREMENT,
+            UnitOfDataRate.MEGABITS_PER_SECOND,
+            3,
+        ),
+        (
+            "rx_bits_per_second",
+            "RX data rate (bits)",
+            "mdi:download-network",
+            UnitOfDataRate.BITS_PER_SECOND,
+            SensorDeviceClass.DATA_RATE,
+            SensorStateClass.MEASUREMENT,
+            UnitOfDataRate.MEGABITS_PER_SECOND,
+            3,
+        ),
+        (
+            "tx_errors_per_second",
+            "TX error rate",
+            "mdi:alert-circle-outline",
+            "errors/s",
+            None,
+            SensorStateClass.MEASUREMENT,
+            None,
+            3,
+        ),
+        (
+            "rx_errors_per_second",
+            "RX error rate",
+            "mdi:alert-circle-outline",
+            "errors/s",
+            None,
+            SensorStateClass.MEASUREMENT,
+            None,
+            3,
+        ),
+    )
+    return [
+        FortiGateInterfaceMetric(
+            coordinator,
+            vdom_name,
+            interface_name,
+            fortigate_serial,
+            fortigate_name,
+            field,
+            name,
+            icon,
+            unit=unit,
+            device_class=device_class,
+            state_class=state_class,
+            suggested_unit=suggested_unit,
+            suggested_precision=suggested_precision,
+        )
+        for (
+            field,
+            name,
+            icon,
+            unit,
+            device_class,
+            state_class,
+            suggested_unit,
+            suggested_precision,
+        ) in definitions
+    ]
 
 
 class FortiGateDNSServerMetric(FortiGateChangedCoordinatorSensor):
@@ -1896,6 +2394,7 @@ class FortiGateARPMetric(FortiGateChangedCoordinatorSensor):
             identifiers={(DOMAIN, arp_identifier)},
             name=f"ARP Device {displayed_mac} ({fortigate_hostname})",
             via_device=(DOMAIN, fortigate_serial),
+            **_detected_device_metadata(coordinator, mac),
         )
         self._attr_device_info = device_info
 
@@ -2082,6 +2581,7 @@ class FortiGateDHCPMetric(FortiGateChangedCoordinatorSensor):
             identifiers={(DOMAIN, dhcp_identifier)},
             name=f"DHCP Device {displayed_mac} ({fortigate_hostname})",
             via_device=(DOMAIN, fortigate_serial),
+            **_detected_device_metadata(coordinator, mac),
         )
 
     def _entries(self) -> list[dict[str, Any]]:
@@ -2136,8 +2636,18 @@ class FortiGateDHCPMetric(FortiGateChangedCoordinatorSensor):
                 for entry in entries
                 if (value := entry.get(source_field)) not in (None, "")
             }
-            if self._field == "hostnames" and self._mask_hostname:
-                values = {mask_client_hostname(value) for value in values}
+            if self._field == "hostnames":
+                if self._mask_hostname:
+                    values = {mask_client_hostname(value) for value in values}
+                if not values and (
+                    detected_hostname := self.coordinator.get_detected_device_hostname(
+                        self._mac
+                    )
+                ):
+                    hostname = detected_hostname[0]
+                    if self._mask_hostname:
+                        hostname = mask_client_hostname(hostname)
+                    return f"{hostname} (Device Info)"
             return ", ".join(sorted(values)) or None
 
         if self._field == "lease_expiration":
@@ -2150,6 +2660,566 @@ class FortiGateDHCPMetric(FortiGateChangedCoordinatorSensor):
             return dt_util.utc_from_timestamp(max(expirations)) if expirations else None
 
         return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return dashboard metadata and the effective hostname source."""
+        attributes = dict(self._attr_extra_state_attributes)
+        if self._field != "hostnames":
+            return attributes
+
+        has_dhcp_hostname = any(
+            isinstance(entry.get("hostname"), str) and entry["hostname"].strip()
+            for entry in self._entries()
+        )
+        attributes["fortios_kd_hostname_source"] = (
+            "dhcp" if has_dhcp_hostname else "device_info"
+        )
+        return attributes
+
+
+class FortiGateDetectedDeviceMatch(FortiGateChangedCoordinatorSensor):
+    """Expose an exact detected-device inventory match on another device."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Detected Device Match"
+    _attr_icon = "mdi:devices"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: FortiOSKDCoordinator,
+        mac: str,
+        fortigate_serial: str,
+        device_identifier: str,
+        entry_type: str,
+        field_attribute: str,
+        mask_hostname: bool,
+    ) -> None:
+        """Initialize an exact FortiGate-scoped MAC match diagnostic."""
+        super().__init__(coordinator)
+        self._mac = mac
+        self._mask_hostname = mask_hostname
+        self._match_attributes = {
+            "fortios_kd_entry_type": entry_type,
+            field_attribute: "detected_device_match",
+            "fortios_kd_match_id": _dashboard_match_id(fortigate_serial, mac),
+        }
+        self._attr_unique_id = f"{device_identifier}_detected_device_match"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, device_identifier)},
+            **_detected_device_metadata(coordinator, mac),
+        )
+
+    def _record(self) -> dict[str, Any] | None:
+        """Return the exact detected-device record."""
+        return self.coordinator.get_detected_device(self._mac)
+
+    @staticmethod
+    def _nested_string(
+        record: dict[str, Any],
+        parent: str,
+        field: str,
+    ) -> str | None:
+        """Return a nonempty nested string."""
+        nested = record.get(parent)
+        if not isinstance(nested, dict):
+            return None
+        value = nested.get(field)
+        return value.strip() if isinstance(value, str) and value.strip() else None
+
+    @property
+    def available(self) -> bool:
+        """Return whether valid inventory data is available."""
+        return super().available and self.coordinator.device_inventory_data_available
+
+    @property
+    def native_value(self) -> str:
+        """Return a useful exact-match summary."""
+        record = self._record()
+        if record is None:
+            return "Not detected"
+
+        hostname = self._nested_string(record, "host", "name")
+        if hostname is not None:
+            return mask_client_hostname(hostname) if self._mask_hostname else hostname
+        return "Matched"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the matched inventory classification without signature IDs."""
+        attributes = dict(self._match_attributes)
+        record = self._record()
+        if record is None:
+            return attributes
+
+        hostname = self._nested_string(record, "host", "name")
+        if hostname is not None and self._mask_hostname:
+            hostname = mask_client_hostname(hostname)
+        attributes.update(
+            {
+                "hostname": hostname,
+                "hostname_source": self._nested_string(record, "host", "src"),
+                "ip_address": record.get("addr"),
+                "ipv6_address": record.get("addr6"),
+                "interface": record.get("interface"),
+                "operating_system": self._nested_string(record, "os", "name"),
+                "operating_system_source": self._nested_string(record, "os", "src"),
+                "hardware_vendor": record.get("hardware_vendor"),
+                "oui_vendor": record.get("oui_vendor"),
+                "vendor_identification_assessment": record.get(
+                    "vendor_identification_assessment"
+                ),
+                "hardware_type": record.get("hardware_type"),
+                "hardware_family": record.get("hardware_family"),
+                "hardware_version": record.get("hardware_version"),
+                "software_version": record.get("software_version"),
+            }
+        )
+        return attributes
+
+
+class FortiGateDetectedDeviceDetails(FortiGateChangedCoordinatorSensor):
+    """Expose the current FortiGate classification for a detected device."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Device details"
+    _attr_icon = "mdi:devices"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: FortiOSKDCoordinator,
+        mac: str,
+        fortigate_serial: str,
+        fortigate_hostname: str,
+        mask_mac: bool,
+        mask_hostname: bool,
+    ) -> None:
+        """Initialize a detected-device details entity."""
+        super().__init__(coordinator)
+        self._mac = mac
+        self._mask_mac = mask_mac
+        self._mask_hostname = mask_hostname
+        device_identifier = f"{fortigate_serial}_detected_device_{mac}"
+        record = coordinator.get_detected_device(mac) or {}
+        displayed_mac = mask_client_mac(mac) if mask_mac else mac
+        hostname = self._nested_string(record, "host", "name")
+        displayed_hostname = (
+            mask_client_hostname(hostname)
+            if hostname is not None and mask_hostname
+            else hostname
+        )
+        device_name = displayed_hostname or displayed_mac
+        manufacturer = self._string(record, "hardware_vendor")
+        model = self._string(record, "hardware_family") or self._string(
+            record, "hardware_type"
+        )
+        hardware_version = self._string(record, "hardware_version")
+        software_version = self._string(record, "software_version")
+
+        self._attr_unique_id = f"{device_identifier}_details"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, device_identifier)},
+            name=f"Detected Device {device_name} ({fortigate_hostname})",
+            manufacturer=manufacturer,
+            model=model,
+            hw_version=hardware_version,
+            sw_version=software_version,
+            via_device=(DOMAIN, fortigate_serial),
+        )
+        self._match_attributes = {
+            "fortios_kd_entry_type": "detected_device",
+            "fortios_kd_device_field": "details",
+            "fortios_kd_match_id": _dashboard_match_id(fortigate_serial, mac),
+        }
+
+    @staticmethod
+    def _string(record: dict[str, Any], field: str) -> str | None:
+        """Return a nonempty string field."""
+        value = record.get(field)
+        return value.strip() if isinstance(value, str) and value.strip() else None
+
+    @staticmethod
+    def _nested_string(
+        record: dict[str, Any],
+        parent: str,
+        field: str,
+    ) -> str | None:
+        """Return a nonempty nested string field."""
+        nested = record.get(parent)
+        if not isinstance(nested, dict):
+            return None
+        value = nested.get(field)
+        return value.strip() if isinstance(value, str) and value.strip() else None
+
+    def _record(self) -> dict[str, Any] | None:
+        """Return the current detected-device record."""
+        return self.coordinator.get_detected_device(self._mac)
+
+    @property
+    def available(self) -> bool:
+        """Return whether this device remains in the current inventory."""
+        return (
+            super().available
+            and self.coordinator.device_inventory_data_available
+            and self._record() is not None
+        )
+
+    @property
+    def native_value(self) -> str | None:
+        """Prefer the hostname, then IPv4 address, then MAC as the summary."""
+        record = self._record()
+        if record is None:
+            return None
+
+        hostname = self._nested_string(record, "host", "name")
+        if hostname is not None:
+            return mask_client_hostname(hostname) if self._mask_hostname else hostname
+
+        ip_address = self._string(record, "addr")
+        if ip_address is not None:
+            return ip_address
+
+        return mask_client_mac(self._mac) if self._mask_mac else self._mac
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return selected identity, classification, and source fields."""
+        attributes = dict(self._match_attributes)
+        record = self._record()
+        if record is None:
+            return attributes
+
+        hostname = self._nested_string(record, "host", "name")
+        master_mac = normalize_mac_address(record.get("master_mac"))
+        attributes.update(
+            {
+                "mac_address": (
+                    mask_client_mac(self._mac) if self._mask_mac else self._mac
+                ),
+                "master_mac_address": (
+                    mask_client_mac(master_mac)
+                    if master_mac is not None and self._mask_mac
+                    else master_mac
+                ),
+                "hostname": (
+                    mask_client_hostname(hostname)
+                    if hostname is not None and self._mask_hostname
+                    else hostname
+                ),
+                "hostname_source": self._nested_string(record, "host", "src"),
+                "ipv4_address": self._string(record, "addr"),
+                "ipv6_address": self._string(record, "addr6"),
+                "interface": self._string(record, "interface"),
+                "operating_system": self._nested_string(record, "os", "name"),
+                "operating_system_source": self._nested_string(record, "os", "src"),
+                "hardware_vendor": self._string(record, "hardware_vendor"),
+                "hardware_vendor_source": self._string(
+                    record, "hardware_vendor_source"
+                ),
+                "oui_vendor": self._string(record, "oui_vendor"),
+                "vendor_identification_assessment": self._string(
+                    record, "vendor_identification_assessment"
+                ),
+                "hardware_type": self._string(record, "hardware_type"),
+                "hardware_type_source": self._string(record, "hardware_type_source"),
+                "hardware_family": self._string(record, "hardware_family"),
+                "hardware_family_source": self._string(
+                    record, "hardware_family_source"
+                ),
+                "hardware_version": self._string(record, "hardware_version"),
+                "hardware_version_source": self._string(
+                    record, "hardware_version_source"
+                ),
+                "software_version": self._string(record, "software_version"),
+                "software_version_source": self._string(
+                    record, "software_version_source"
+                ),
+            }
+        )
+        return attributes
+
+
+class FortiGateDetectedDeviceMetric(FortiGateChangedCoordinatorSensor):
+    """Expose one selected field from a FortiGate-detected device."""
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(
+        self,
+        coordinator: FortiOSKDCoordinator,
+        mac: str,
+        fortigate_serial: str,
+        field: str,
+        field_path: tuple[str, ...],
+        name: str,
+        icon: str,
+        *,
+        mask_mac: bool,
+        mask_hostname: bool,
+    ) -> None:
+        """Initialize a detected-device field entity."""
+        super().__init__(coordinator)
+        self._mac = mac
+        self._field = field
+        self._field_path = field_path
+        self._mask_mac = mask_mac
+        self._mask_hostname = mask_hostname
+        device_identifier = f"{fortigate_serial}_detected_device_{mac}"
+
+        self._attr_unique_id = f"{device_identifier}_{field}"
+        self._attr_name = name
+        self._attr_icon = icon
+        self._attr_extra_state_attributes = {
+            "fortios_kd_entry_type": "detected_device",
+            "fortios_kd_device_field": field,
+            "fortios_kd_match_id": _dashboard_match_id(fortigate_serial, mac),
+        }
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, device_identifier)},
+        )
+
+    def _value(self) -> Any:
+        """Return this field's current value."""
+        value: Any = self.coordinator.get_detected_device(self._mac)
+        for field in self._field_path:
+            if not isinstance(value, dict):
+                return None
+            value = value.get(field)
+
+        if not isinstance(value, str) or not value.strip():
+            return None
+
+        value = value.strip()
+        if self._field in {"mac_address", "master_mac_address"}:
+            normalized_mac = normalize_mac_address(value)
+            if normalized_mac is None:
+                return None
+            return mask_client_mac(normalized_mac) if self._mask_mac else normalized_mac
+        if self._field == "hostname" and self._mask_hostname:
+            return mask_client_hostname(value)
+        return value
+
+    @property
+    def available(self) -> bool:
+        """Return whether this device and selected field are current."""
+        return (
+            super().available
+            and self.coordinator.device_inventory_data_available
+            and self._value() is not None
+        )
+
+    @property
+    def native_value(self) -> Any:
+        """Return this detected-device field."""
+        return self._value()
+
+
+class FortiGateDetectedDeviceLastSeen(FortiGateChangedCoordinatorSensor):
+    """Expose when FortiGate last observed a detected device."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Last seen"
+    _attr_icon = "mdi:clock-outline"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(
+        self,
+        coordinator: FortiOSKDCoordinator,
+        mac: str,
+        fortigate_serial: str,
+    ) -> None:
+        """Initialize the detected-device last-seen entity."""
+        super().__init__(coordinator)
+        self._mac = mac
+        device_identifier = f"{fortigate_serial}_detected_device_{mac}"
+        self._attr_unique_id = f"{device_identifier}_last_seen"
+        self._attr_extra_state_attributes = {
+            "fortios_kd_entry_type": "detected_device",
+            "fortios_kd_device_field": "last_seen",
+            "fortios_kd_match_id": _dashboard_match_id(fortigate_serial, mac),
+        }
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, device_identifier)},
+        )
+
+    def _value(self) -> Any:
+        """Return the normalized last-seen timestamp."""
+        record = self.coordinator.get_detected_device(self._mac)
+        return record.get("last_seen_at") if record is not None else None
+
+    @property
+    def available(self) -> bool:
+        """Return whether a current last-seen timestamp exists."""
+        return (
+            super().available
+            and self.coordinator.device_inventory_data_available
+            and self._value() is not None
+        )
+
+    @property
+    def native_value(self) -> Any:
+        """Return the last-seen timestamp."""
+        return self._value()
+
+
+class FortiGateDetectedDeviceChange(FortiGateChangedCoordinatorSensor):
+    """Expose fields changed during the latest inventory observation."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Inventory changes"
+    _attr_icon = "mdi:delta"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: FortiOSKDCoordinator,
+        mac: str,
+        fortigate_serial: str,
+    ) -> None:
+        """Initialize the inventory-change summary."""
+        super().__init__(coordinator)
+        self._mac = mac
+        device_identifier = f"{fortigate_serial}_detected_device_{mac}"
+        self._attr_unique_id = f"{device_identifier}_inventory_changes"
+        self._attr_extra_state_attributes = {
+            "fortios_kd_entry_type": "detected_device",
+            "fortios_kd_device_field": "inventory_changes",
+            "fortios_kd_match_id": _dashboard_match_id(fortigate_serial, mac),
+        }
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, device_identifier)},
+        )
+
+    @property
+    def available(self) -> bool:
+        """Return whether this device remains in current inventory."""
+        return (
+            super().available
+            and self.coordinator.device_inventory_data_available
+            and self.coordinator.get_detected_device(self._mac) is not None
+        )
+
+    @property
+    def native_value(self) -> str:
+        """Return the latest changed field names without retaining old values."""
+        change = self.coordinator.get_detected_device_change(self._mac)
+        if change is None:
+            return "No changes observed"
+        fields = change.get("changed_fields")
+        if not isinstance(fields, list):
+            return "No changes observed"
+        return ", ".join(str(field) for field in fields) or "No changes observed"
+
+
+class FortiGateDetectedDeviceLastChange(FortiGateChangedCoordinatorSensor):
+    """Expose when inventory fields most recently changed."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Last inventory change"
+    _attr_icon = "mdi:clock-edit-outline"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(
+        self,
+        coordinator: FortiOSKDCoordinator,
+        mac: str,
+        fortigate_serial: str,
+    ) -> None:
+        """Initialize the inventory-change timestamp."""
+        super().__init__(coordinator)
+        self._mac = mac
+        device_identifier = f"{fortigate_serial}_detected_device_{mac}"
+        self._attr_unique_id = f"{device_identifier}_last_inventory_change"
+        self._attr_extra_state_attributes = {
+            "fortios_kd_entry_type": "detected_device",
+            "fortios_kd_device_field": "last_inventory_change",
+            "fortios_kd_match_id": _dashboard_match_id(fortigate_serial, mac),
+        }
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, device_identifier)},
+        )
+
+    def _value(self) -> Any:
+        """Return the most recent change timestamp."""
+        change = self.coordinator.get_detected_device_change(self._mac)
+        return change.get("changed_at") if change is not None else None
+
+    @property
+    def available(self) -> bool:
+        """Return whether a change timestamp has been observed."""
+        return (
+            super().available
+            and self.coordinator.device_inventory_data_available
+            and self._value() is not None
+        )
+
+    @property
+    def native_value(self) -> Any:
+        """Return the most recent inventory-change timestamp."""
+        return self._value()
+
+
+class FortiGateDetectedDeviceObservationStatus(FortiGateChangedCoordinatorSensor):
+    """Describe whether a detected device was observed within the last hour."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Observation status"
+    _attr_icon = "mdi:radar"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: FortiOSKDCoordinator,
+        mac: str,
+        fortigate_serial: str,
+    ) -> None:
+        """Initialize a recent-or-stale inventory status."""
+        super().__init__(coordinator)
+        self._mac = mac
+        device_identifier = f"{fortigate_serial}_detected_device_{mac}"
+        self._attr_unique_id = f"{device_identifier}_observation_status"
+        self._attr_extra_state_attributes = {
+            "fortios_kd_entry_type": "detected_device",
+            "fortios_kd_device_field": "observation_status",
+            "fortios_kd_match_id": _dashboard_match_id(fortigate_serial, mac),
+            "recent_window": "1 hour",
+        }
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, device_identifier)},
+        )
+
+    def _last_seen(self) -> datetime | None:
+        """Return the normalized last-seen timestamp."""
+        record = self.coordinator.get_detected_device(self._mac)
+        value = record.get("last_seen_at") if record is not None else None
+        return value if isinstance(value, datetime) else None
+
+    @property
+    def available(self) -> bool:
+        """Return whether the inventory supplies a last-seen timestamp."""
+        return (
+            super().available
+            and self.coordinator.device_inventory_data_available
+            and self._last_seen() is not None
+        )
+
+    @property
+    def native_value(self) -> str | None:
+        """Return Recently seen or Stale using a rolling one-hour window."""
+        last_seen = self._last_seen()
+        if last_seen is None:
+            return None
+        return (
+            "Recently seen"
+            if datetime.now(UTC) - last_seen < timedelta(hours=1)
+            else "Stale"
+        )
 
 
 class FortiGateWiFiClientCoordinatorEntity(FortiGateChangedCoordinatorSensor):
@@ -2190,6 +3260,7 @@ class FortiGateWiFiClientMAC(FortiGateWiFiClientCoordinatorEntity):
             identifiers={(DOMAIN, client_identifier)},
             name=f"Wifi Client {displayed_mac} ({fortigate_hostname})",
             via_device=(DOMAIN, fortigate_serial),
+            **_detected_device_metadata(coordinator, self._mac),
         )
 
     def _get_client(self) -> dict[str, Any] | None:
@@ -2273,6 +3344,13 @@ class FortiGateWiFiClientMetric(FortiGateWiFiClientCoordinatorEntity):
 
         value = client.get(self._field)
 
+        if self._field == "hostname" and (
+            not isinstance(value, str) or not value.strip()
+        ):
+            detected_hostname = self.coordinator.get_detected_device_hostname(self._mac)
+            if detected_hostname is not None:
+                value = detected_hostname[0]
+
         if self._field == "association_time":
             try:
                 return dt_util.utc_from_timestamp(int(value))
@@ -2293,6 +3371,22 @@ class FortiGateWiFiClientMetric(FortiGateWiFiClientCoordinatorEntity):
             return value
 
         return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str] | None:
+        """Identify the origin of a direct or inventory hostname value."""
+        if self._field != "hostname":
+            return None
+
+        client = self._get_client()
+        hostname = client.get("hostname") if client is not None else None
+        if isinstance(hostname, str) and hostname.strip():
+            return {"fortios_kd_hostname_source": "wifi"}
+
+        detected_hostname = self.coordinator.get_detected_device_hostname(self._mac)
+        if detected_hostname is None:
+            return None
+        return {"fortios_kd_hostname_source": detected_hostname[1] or "device"}
 
     @property
     def available(self) -> bool:
@@ -2577,6 +3671,21 @@ def create_arp_entities(
             "mdi:shield-alert-outline",
             **options,
         ),
+        *(
+            [
+                FortiGateDetectedDeviceMatch(
+                    coordinator,
+                    mac,
+                    fortigate_serial,
+                    f"{fortigate_serial}_arp_{mac}",
+                    "arp_entry",
+                    "fortios_kd_arp_field",
+                    mask_hostname,
+                )
+            ]
+            if coordinator.sync_device_inventory is True
+            else []
+        ),
     ]
 
 
@@ -2671,6 +3780,169 @@ def create_dhcp_entities(
             "mdi:wifi-check",
             **options,
         ),
+        *(
+            [
+                FortiGateDetectedDeviceMatch(
+                    coordinator,
+                    mac,
+                    fortigate_serial,
+                    f"{fortigate_serial}_dhcp_{mac}",
+                    "dhcp_entry",
+                    "fortios_kd_dhcp_field",
+                    mask_hostname,
+                )
+            ]
+            if coordinator.sync_device_inventory is True
+            else []
+        ),
+    ]
+
+
+def create_detected_device_entities(
+    coordinator: FortiOSKDCoordinator,
+    mac: str,
+    fortigate_serial: str,
+    fortigate_hostname: str,
+    mask_mac: bool,
+    mask_hostname: bool,
+) -> list[SensorEntity]:
+    """Create selected diagnostics for one FortiGate-detected device."""
+    definitions = (
+        ("mac_address", ("mac",), "MAC address", "mdi:network-outline"),
+        (
+            "master_mac_address",
+            ("master_mac",),
+            "Master MAC address",
+            "mdi:network-outline",
+        ),
+        ("hostname", ("host", "name"), "Hostname", "mdi:form-textbox"),
+        (
+            "hostname_source",
+            ("host", "src"),
+            "Hostname source",
+            "mdi:source-branch",
+        ),
+        ("ipv4_address", ("addr",), "IP address", "mdi:ip"),
+        ("ipv6_address", ("addr6",), "IPv6 address", "mdi:ip-outline"),
+        ("interface", ("interface",), "Interface", "mdi:lan-connect"),
+        ("operating_system", ("os", "name"), "Operating system", "mdi:laptop"),
+        (
+            "operating_system_source",
+            ("os", "src"),
+            "Operating system source",
+            "mdi:source-branch",
+        ),
+        (
+            "hardware_vendor",
+            ("hardware_vendor",),
+            "Hardware vendor",
+            "mdi:factory",
+        ),
+        (
+            "hardware_vendor_source",
+            ("hardware_vendor_source",),
+            "Hardware vendor source",
+            "mdi:source-branch",
+        ),
+        (
+            "oui_vendor",
+            ("oui_vendor",),
+            "OUI-derived vendor",
+            "mdi:identifier",
+        ),
+        (
+            "vendor_identification_assessment",
+            ("vendor_identification_assessment",),
+            "Vendor identification assessment",
+            "mdi:shield-search",
+        ),
+        ("hardware_type", ("hardware_type",), "Hardware type", "mdi:devices"),
+        (
+            "hardware_type_source",
+            ("hardware_type_source",),
+            "Hardware type source",
+            "mdi:source-branch",
+        ),
+        (
+            "hardware_family",
+            ("hardware_family",),
+            "Hardware family",
+            "mdi:devices",
+        ),
+        (
+            "hardware_family_source",
+            ("hardware_family_source",),
+            "Hardware family source",
+            "mdi:source-branch",
+        ),
+        (
+            "hardware_version",
+            ("hardware_version",),
+            "Hardware version",
+            "mdi:chip",
+        ),
+        (
+            "hardware_version_source",
+            ("hardware_version_source",),
+            "Hardware version source",
+            "mdi:source-branch",
+        ),
+        (
+            "software_version",
+            ("software_version",),
+            "Software version",
+            "mdi:update",
+        ),
+        (
+            "software_version_source",
+            ("software_version_source",),
+            "Software version source",
+            "mdi:source-branch",
+        ),
+    )
+    return [
+        FortiGateDetectedDeviceDetails(
+            coordinator,
+            mac,
+            fortigate_serial,
+            fortigate_hostname,
+            mask_mac,
+            mask_hostname,
+        ),
+        *(
+            FortiGateDetectedDeviceMetric(
+                coordinator,
+                mac,
+                fortigate_serial,
+                field,
+                field_path,
+                name,
+                icon,
+                mask_mac=mask_mac,
+                mask_hostname=mask_hostname,
+            )
+            for field, field_path, name, icon in definitions
+        ),
+        FortiGateDetectedDeviceLastSeen(
+            coordinator,
+            mac,
+            fortigate_serial,
+        ),
+        FortiGateDetectedDeviceObservationStatus(
+            coordinator,
+            mac,
+            fortigate_serial,
+        ),
+        FortiGateDetectedDeviceChange(
+            coordinator,
+            mac,
+            fortigate_serial,
+        ),
+        FortiGateDetectedDeviceLastChange(
+            coordinator,
+            mac,
+            fortigate_serial,
+        ),
     ]
 
 
@@ -2712,6 +3984,21 @@ def create_wifi_client_entities(
             client,
             fortigate_serial,
             fortigate_hostname,
+        ),
+        *(
+            [
+                FortiGateDetectedDeviceMatch(
+                    coordinator,
+                    normalized_mac,
+                    fortigate_serial,
+                    f"{fortigate_serial}_wifi_client_{normalized_mac}",
+                    "wifi_client",
+                    "fortios_kd_wifi_field",
+                    masking["hostname"],
+                )
+            ]
+            if coordinator.sync_device_inventory is True
+            else []
         ),
         FortiGateWiFiClientIPAddress(coordinator, client, fortigate_serial),
         *(

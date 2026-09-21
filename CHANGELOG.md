@@ -3,6 +3,64 @@
 Notable changes and deliberate compatibility, security, and privacy decisions
 are recorded here for each release.
 
+## 0.7.2 - 2026-09-21
+
+### Added
+
+- Add optional FortiGate detected-device inventory synchronization. Detected
+  devices expose hostname, MAC and master MAC, IPv4 and IPv6 addresses,
+  interface, operating system, hardware vendor/type/family/version, software
+  version, identification sources, and relative last-seen time.
+- Add OUI-derived vendor diagnostics using Home Assistant's packaged IEEE
+  database. A separate assessment identifies conservative conflicts between
+  the OUI-derived vendor and a FortiGuard-sourced vendor without replacing the
+  FortiGate classification.
+- Add **Recently seen**, **Stale**, **Inventory changes**, and **Last inventory
+  change** diagnostics. Inventory changes retain field names and a timestamp
+  without storing the previous potentially sensitive values.
+- Add exact-MAC detected-device matches to ARP, DHCP, and wifi-client devices.
+  Inventory hostnames can serve as a lower-priority fallback labeled **(Device
+  Info)** when no better hostname source is available.
+- Add a **KD Device Table** dashboard strategy with FortiGate, hardware vendor,
+  hardware type, hardware family, operating system, software version,
+  interface, and relative last-seen filters. Last-seen filtering supports both
+  less-than and more-than choices from one hour through one year.
+- Add optional interface synchronization for physical and VLAN interfaces in
+  every available VDOM. Interface devices expose name, alias, IPv4 address,
+  prefix length, link state, speed, duplex, VLAN ID, parent interface, and
+  calculated TX/RX bit, byte, packet, and error rates.
+- Add an editable **Preferred name** to every interface. It initially follows
+  the FortiGate interface alias, or the interface name when no alias exists. A
+  Home Assistant override remains in place until the alias changes on the
+  FortiGate, at which point the new alias is applied once.
+- Add a **KD Interface Graphs** dashboard strategy. Graphs are ordered as TX/RX
+  Mbps, TX/RX MB/s, TX/RX packet rate, and TX/RX error rate. Filters cover
+  FortiGate, link state, observed speed/duplex, and parent interface; layouts
+  can combine matching interfaces by rate or separate them by firewall. Time
+  ranges extend from 30 minutes through one week and default to one hour.
+- Add independent dashboard switches for hiding hardware-switch members and
+  logical Wi-Fi SSID interfaces while retaining interface-kind diagnostics.
+
+### Changed
+
+- Use each interface's Preferred name in interface graph legends. All-firewall
+  views include the FortiGate and VDOM; single-firewall and separated layouts
+  omit the redundant FortiGate name for shorter legends.
+- Display interface data rates in both networking-oriented Mbps and storage-
+  oriented MB/s views, with Mbps graphs shown first.
+- Refresh interface counters and aliases on the normal coordinator interval,
+  cache the larger detected-device inventory for five minutes, and suppress
+  unchanged interface state writes to reduce Recorder and WebSocket activity.
+
+### Compatibility
+
+- Keep detected-device and interface synchronization disabled by default so an
+  upgrade does not unexpectedly create large device and entity inventories.
+- Continue using Home Assistant 2025.12-compatible device relationships rather
+  than requiring the newer subdevice API.
+- Automatically fall back to requesting interfaces one VDOM at a time when a
+  FortiOS build cannot return all VDOM interfaces in one monitor request.
+
 ## 0.7.1 - 2026-09-20
 
 ### Added

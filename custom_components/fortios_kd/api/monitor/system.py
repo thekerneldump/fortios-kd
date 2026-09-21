@@ -37,3 +37,22 @@ class FortiOSSystemApi:
             params={"vdom": "*"},
             allow_list=True,
         )
+
+    async def get_interfaces(
+        self,
+        vdom: str = "*",
+    ) -> dict[str, Any] | list[Any]:
+        """Return physical and VLAN interface statistics for selected VDOMs."""
+        return await self._http.get(
+            "monitor/system/interface",
+            params={"include_vlan": "true", "vdom": vdom},
+            allow_list=vdom == "*",
+        )
+
+    async def get_available_interfaces(self) -> dict[str, Any] | list[Any]:
+        """Return interface types, relationships, and composite membership."""
+        return await self._http.get(
+            "monitor/system/available-interfaces",
+            params={"vdom": "*"},
+            allow_list=True,
+        )

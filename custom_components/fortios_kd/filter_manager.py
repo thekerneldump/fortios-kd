@@ -24,6 +24,10 @@ FILTER_RESERVED = "Reserved"
 FILTER_LEASED = "Leased"
 VDOM_GRAPH_LAYOUT_COMBINED = "Combined by resource"
 VDOM_GRAPH_LAYOUT_SEPARATE = "Separate by VDOM"
+INTERFACE_GRAPH_LAYOUT_COMBINED = "Combined by rate"
+INTERFACE_GRAPH_LAYOUT_SEPARATE = "Separated by firewall"
+INTERFACE_LINK_UP = "Up"
+INTERFACE_LINK_DOWN = "Down"
 GRAPH_TIME_SPAN_OPTIONS = (
     "1 week",
     "1 day",
@@ -34,6 +38,18 @@ GRAPH_TIME_SPAN_OPTIONS = (
     "30 min",
 )
 GRAPH_TIME_SPAN_DEFAULT = "1 hour"
+DEVICE_LAST_SEEN_OPTIONS = (
+    "Less than 1 hour ago",
+    "Less than 1 day ago",
+    "Less than 1 week ago",
+    "Less than 1 month ago",
+    "Less than 1 year ago",
+    "More than 1 hour ago",
+    "More than 1 day ago",
+    "More than 1 week ago",
+    "More than 1 month ago",
+    "More than 1 year ago",
+)
 CLIENT_IDENTIFIER_MARKER = "_wifi_client_"
 
 
@@ -70,10 +86,26 @@ class FortiOSKDFilterManager:
         self._selected_arp_lease_type = FILTER_ALL
         self._selected_dhcp_fortigate = FILTER_ALL
         self._selected_dhcp_interface = FILTER_ALL
+        self._selected_device_fortigate = FILTER_ALL
+        self._selected_device_hardware_vendor = FILTER_ALL
+        self._selected_device_hardware_type = FILTER_ALL
+        self._selected_device_hardware_family = FILTER_ALL
+        self._selected_device_operating_system = FILTER_ALL
+        self._selected_device_software_version = FILTER_ALL
+        self._selected_device_interface = FILTER_ALL
+        self._selected_device_last_seen = FILTER_ALL
         self._selected_vdom_fortigate = FILTER_ALL
         self._selected_vdom = FILTER_ALL
         self._selected_vdom_graph_layout = VDOM_GRAPH_LAYOUT_COMBINED
         self._selected_vdom_time_span = GRAPH_TIME_SPAN_DEFAULT
+        self._selected_interface_fortigate = FILTER_ALL
+        self._hide_interface_hardware_switch_members = True
+        self._hide_interface_wifi_ssid_interfaces = True
+        self._selected_interface_link = FILTER_ALL
+        self._selected_interface_speed_duplex = FILTER_ALL
+        self._selected_interface_parent = FILTER_ALL
+        self._selected_interface_graph_layout = INTERFACE_GRAPH_LAYOUT_COMBINED
+        self._selected_interface_time_span = GRAPH_TIME_SPAN_DEFAULT
         self._listeners: set[Callable[[], None]] = set()
         self._owner_entry_id: str | None = None
         self._remove_registry_listeners = [
@@ -125,10 +157,47 @@ class FortiOSKDFilterManager:
             self._selected_dhcp_fortigate = FILTER_ALL
         if self._selected_dhcp_interface not in self.dhcp_interface_options:
             self._selected_dhcp_interface = FILTER_ALL
+        if self._selected_device_fortigate not in self.device_fortigate_options:
+            self._selected_device_fortigate = FILTER_ALL
+        if (
+            self._selected_device_hardware_vendor
+            not in self.device_hardware_vendor_options
+        ):
+            self._selected_device_hardware_vendor = FILTER_ALL
+        if self._selected_device_hardware_type not in self.device_hardware_type_options:
+            self._selected_device_hardware_type = FILTER_ALL
+        if (
+            self._selected_device_hardware_family
+            not in self.device_hardware_family_options
+        ):
+            self._selected_device_hardware_family = FILTER_ALL
+        if (
+            self._selected_device_operating_system
+            not in self.device_operating_system_options
+        ):
+            self._selected_device_operating_system = FILTER_ALL
+        if (
+            self._selected_device_software_version
+            not in self.device_software_version_options
+        ):
+            self._selected_device_software_version = FILTER_ALL
+        if self._selected_device_interface not in self.device_interface_options:
+            self._selected_device_interface = FILTER_ALL
         if self._selected_vdom_fortigate not in self.vdom_fortigate_options:
             self._selected_vdom_fortigate = FILTER_ALL
         if self._selected_vdom not in self.vdom_options:
             self._selected_vdom = FILTER_ALL
+        if self._selected_interface_fortigate not in self.interface_fortigate_options:
+            self._selected_interface_fortigate = FILTER_ALL
+        if self._selected_interface_link not in self.interface_link_options:
+            self._selected_interface_link = FILTER_ALL
+        if (
+            self._selected_interface_speed_duplex
+            not in self.interface_speed_duplex_options
+        ):
+            self._selected_interface_speed_duplex = FILTER_ALL
+        if self._selected_interface_parent not in self.interface_parent_options:
+            self._selected_interface_parent = FILTER_ALL
         self._notify_listeners()
 
     @callback
@@ -186,9 +255,23 @@ class FortiOSKDFilterManager:
         if self._selected_dhcp_fortigate not in self.dhcp_fortigate_options:
             self._selected_dhcp_fortigate = FILTER_ALL
             self._selected_dhcp_interface = FILTER_ALL
+        if self._selected_device_fortigate not in self.device_fortigate_options:
+            self._selected_device_fortigate = FILTER_ALL
+            self._selected_device_hardware_vendor = FILTER_ALL
+            self._selected_device_hardware_type = FILTER_ALL
+            self._selected_device_hardware_family = FILTER_ALL
+            self._selected_device_operating_system = FILTER_ALL
+            self._selected_device_software_version = FILTER_ALL
+            self._selected_device_interface = FILTER_ALL
+            self._selected_device_last_seen = FILTER_ALL
         if self._selected_vdom_fortigate not in self.vdom_fortigate_options:
             self._selected_vdom_fortigate = FILTER_ALL
             self._selected_vdom = FILTER_ALL
+        if self._selected_interface_fortigate not in self.interface_fortigate_options:
+            self._selected_interface_fortigate = FILTER_ALL
+            self._selected_interface_link = FILTER_ALL
+            self._selected_interface_speed_duplex = FILTER_ALL
+            self._selected_interface_parent = FILTER_ALL
         self._handle_coordinator_update()
 
     def update_hub_name(self, entry_id: str, name: str) -> None:
@@ -203,7 +286,9 @@ class FortiOSKDFilterManager:
             "_selected_fortigate",
             "_selected_arp_fortigate",
             "_selected_dhcp_fortigate",
+            "_selected_device_fortigate",
             "_selected_vdom_fortigate",
+            "_selected_interface_fortigate",
         ):
             if getattr(self, attribute) == old_name:
                 setattr(self, attribute, name)
@@ -639,6 +724,178 @@ class FortiOSKDFilterManager:
         self._selected_dhcp_interface = option
         self._notify_listeners()
 
+    def _device_hubs(self) -> list[FortiOSKDFilterHub]:
+        """Return device-inventory hubs matching the FortiGate selection."""
+        return [
+            hub
+            for hub in self._hubs.values()
+            if hub.coordinator.sync_device_inventory is True
+            and self._selected_device_fortigate in (FILTER_ALL, hub.name)
+        ]
+
+    @property
+    def device_fortigate_options(self) -> list[str]:
+        """Return FortiGates with detected-device synchronization enabled."""
+        names = {
+            hub.name
+            for hub in self._hubs.values()
+            if hub.coordinator.sync_device_inventory is True
+        }
+        return [FILTER_ALL, *sorted(names, key=str.casefold)]
+
+    @property
+    def selected_device_fortigate(self) -> str:
+        """Return the selected detected-device FortiGate."""
+        return self._selected_device_fortigate
+
+    def select_device_fortigate(self, option: str) -> None:
+        """Select a FortiGate and reset dependent device-table filters."""
+        if option not in self.device_fortigate_options:
+            raise ValueError(f"Unknown device FortiGate option: {option}")
+        self._selected_device_fortigate = option
+        self._selected_device_hardware_vendor = FILTER_ALL
+        self._selected_device_hardware_type = FILTER_ALL
+        self._selected_device_hardware_family = FILTER_ALL
+        self._selected_device_operating_system = FILTER_ALL
+        self._selected_device_software_version = FILTER_ALL
+        self._selected_device_interface = FILTER_ALL
+        self._selected_device_last_seen = FILTER_ALL
+        self._notify_listeners()
+
+    def _device_inventory_values(self, *field_path: str) -> list[str]:
+        """Return sorted device-inventory values for a selected field path."""
+        values: set[str] = set()
+        for hub in self._device_hubs():
+            for mac in hub.coordinator.detected_device_macs:
+                value: Any = hub.coordinator.get_detected_device(mac)
+                for field in field_path:
+                    if not isinstance(value, dict):
+                        value = None
+                        break
+                    value = value.get(field)
+                if isinstance(value, str) and value.strip():
+                    values.add(value.strip())
+        return [FILTER_ALL, *sorted(values, key=str.casefold)]
+
+    @property
+    def device_hardware_vendor_options(self) -> list[str]:
+        """Return detected-device hardware vendors."""
+        return self._device_inventory_values("hardware_vendor")
+
+    @property
+    def selected_device_hardware_vendor(self) -> str:
+        """Return the selected detected-device hardware vendor."""
+        return self._selected_device_hardware_vendor
+
+    def select_device_hardware_vendor(self, option: str) -> None:
+        """Select a detected-device hardware vendor."""
+        if option not in self.device_hardware_vendor_options:
+            raise ValueError(f"Unknown device hardware vendor option: {option}")
+        self._selected_device_hardware_vendor = option
+        self._notify_listeners()
+
+    @property
+    def device_hardware_type_options(self) -> list[str]:
+        """Return detected-device hardware types."""
+        return self._device_inventory_values("hardware_type")
+
+    @property
+    def selected_device_hardware_type(self) -> str:
+        """Return the selected detected-device hardware type."""
+        return self._selected_device_hardware_type
+
+    def select_device_hardware_type(self, option: str) -> None:
+        """Select a detected-device hardware type."""
+        if option not in self.device_hardware_type_options:
+            raise ValueError(f"Unknown device hardware type option: {option}")
+        self._selected_device_hardware_type = option
+        self._notify_listeners()
+
+    @property
+    def device_hardware_family_options(self) -> list[str]:
+        """Return detected-device hardware families."""
+        return self._device_inventory_values("hardware_family")
+
+    @property
+    def selected_device_hardware_family(self) -> str:
+        """Return the selected detected-device hardware family."""
+        return self._selected_device_hardware_family
+
+    def select_device_hardware_family(self, option: str) -> None:
+        """Select a detected-device hardware family."""
+        if option not in self.device_hardware_family_options:
+            raise ValueError(f"Unknown device hardware family option: {option}")
+        self._selected_device_hardware_family = option
+        self._notify_listeners()
+
+    @property
+    def device_operating_system_options(self) -> list[str]:
+        """Return detected-device operating systems."""
+        return self._device_inventory_values("os", "name")
+
+    @property
+    def selected_device_operating_system(self) -> str:
+        """Return the selected detected-device operating system."""
+        return self._selected_device_operating_system
+
+    def select_device_operating_system(self, option: str) -> None:
+        """Select a detected-device operating system."""
+        if option not in self.device_operating_system_options:
+            raise ValueError(f"Unknown device operating system option: {option}")
+        self._selected_device_operating_system = option
+        self._notify_listeners()
+
+    @property
+    def device_software_version_options(self) -> list[str]:
+        """Return detected-device software versions."""
+        return self._device_inventory_values("software_version")
+
+    @property
+    def selected_device_software_version(self) -> str:
+        """Return the selected detected-device software version."""
+        return self._selected_device_software_version
+
+    def select_device_software_version(self, option: str) -> None:
+        """Select a detected-device software version."""
+        if option not in self.device_software_version_options:
+            raise ValueError(f"Unknown device software version option: {option}")
+        self._selected_device_software_version = option
+        self._notify_listeners()
+
+    @property
+    def device_interface_options(self) -> list[str]:
+        """Return detected-device interfaces."""
+        return self._device_inventory_values("interface")
+
+    @property
+    def selected_device_interface(self) -> str:
+        """Return the selected detected-device interface."""
+        return self._selected_device_interface
+
+    def select_device_interface(self, option: str) -> None:
+        """Select a detected-device interface."""
+        if option not in self.device_interface_options:
+            raise ValueError(f"Unknown device interface option: {option}")
+        self._selected_device_interface = option
+        self._notify_listeners()
+
+    @property
+    def device_last_seen_options(self) -> list[str]:
+        """Return rolling last-seen windows for detected devices."""
+        return [FILTER_ALL, *DEVICE_LAST_SEEN_OPTIONS]
+
+    @property
+    def selected_device_last_seen(self) -> str:
+        """Return the selected detected-device last-seen window."""
+        return self._selected_device_last_seen
+
+    def select_device_last_seen(self, option: str) -> None:
+        """Select a detected-device last-seen window."""
+        if option not in self.device_last_seen_options:
+            raise ValueError(f"Unknown device last-seen option: {option}")
+        self._selected_device_last_seen = option
+        self._notify_listeners()
+
     def _vdom_hubs(self) -> list[FortiOSKDFilterHub]:
         """Return hubs matching the VDOM-resource FortiGate selection."""
         return [
@@ -744,4 +1001,198 @@ class FortiOSKDFilterManager:
             raise ValueError(f"Unknown VDOM time span option: {option}")
 
         self._selected_vdom_time_span = option
+        self._notify_listeners()
+
+    @property
+    def interface_fortigate_options(self) -> list[str]:
+        """Return FortiGates that currently expose interface statistics."""
+        names = {
+            hub.name
+            for hub in self._hubs.values()
+            if isinstance(hub.coordinator.interface_keys, set)
+            and hub.coordinator.interface_keys
+        }
+        return [FILTER_ALL, *sorted(names, key=str.casefold)]
+
+    @property
+    def selected_interface_fortigate(self) -> str:
+        """Return the selected interface-graph FortiGate."""
+        return self._selected_interface_fortigate
+
+    def select_interface_fortigate(self, option: str) -> None:
+        """Select the FortiGate and reset dependent interface filters."""
+        if option not in self.interface_fortigate_options:
+            raise ValueError(f"Unknown interface FortiGate option: {option}")
+
+        self._selected_interface_fortigate = option
+        self._selected_interface_link = FILTER_ALL
+        self._selected_interface_speed_duplex = FILTER_ALL
+        self._selected_interface_parent = FILTER_ALL
+        self._notify_listeners()
+
+    def _interface_hubs(self) -> list[FortiOSKDFilterHub]:
+        """Return interface-enabled hubs matching the FortiGate selection."""
+        return [
+            hub
+            for hub in self._hubs.values()
+            if isinstance(hub.coordinator.interface_keys, set)
+            and hub.coordinator.interface_keys
+            and self._selected_interface_fortigate in (FILTER_ALL, hub.name)
+        ]
+
+    def _interface_records(self) -> list[dict[str, Any]]:
+        """Return current interface records for the selected FortiGates."""
+        records: list[dict[str, Any]] = []
+        for hub in self._interface_hubs():
+            for vdom_name, interface_name in hub.coordinator.interface_keys:
+                record = hub.coordinator.get_interface(vdom_name, interface_name)
+                if isinstance(record, dict):
+                    records.append(record)
+        return records
+
+    @property
+    def hide_interface_hardware_switch_members(self) -> bool:
+        """Return whether hardware-switch member ports are hidden."""
+        return self._hide_interface_hardware_switch_members
+
+    def set_hide_interface_hardware_switch_members(self, hidden: bool) -> None:
+        """Show or hide hardware-switch member ports in interface graphs."""
+        self._hide_interface_hardware_switch_members = hidden
+        self._notify_listeners()
+
+    @property
+    def hide_interface_wifi_ssid_interfaces(self) -> bool:
+        """Return whether WiFi SSID interfaces are hidden."""
+        return self._hide_interface_wifi_ssid_interfaces
+
+    def set_hide_interface_wifi_ssid_interfaces(self, hidden: bool) -> None:
+        """Show or hide WiFi SSID interfaces in interface graphs."""
+        self._hide_interface_wifi_ssid_interfaces = hidden
+        self._notify_listeners()
+
+    @staticmethod
+    def _speed_duplex_label(record: dict[str, Any]) -> str | None:
+        """Return the available speed and duplex as one filter label."""
+        parts: list[str] = []
+        speed = record.get("speed")
+        if isinstance(speed, (int, float)) and not isinstance(speed, bool):
+            parts.append(f"{speed:g} Mbps")
+
+        duplex = record.get("duplex")
+        duplex_label = {-1: "Not applicable", 0: "Half", 1: "Full"}.get(duplex)
+        if duplex_label is not None:
+            parts.append(duplex_label)
+
+        return " / ".join(parts) or None
+
+    @property
+    def interface_link_options(self) -> list[str]:
+        """Return link states currently represented by interfaces."""
+        observed = {
+            INTERFACE_LINK_UP if record.get("link") is True else INTERFACE_LINK_DOWN
+            for record in self._interface_records()
+            if isinstance(record.get("link"), bool)
+        }
+        return [
+            FILTER_ALL,
+            *(
+                option
+                for option in (INTERFACE_LINK_UP, INTERFACE_LINK_DOWN)
+                if option in observed
+            ),
+        ]
+
+    @property
+    def selected_interface_link(self) -> str:
+        """Return the selected interface link state."""
+        return self._selected_interface_link
+
+    def select_interface_link(self, option: str) -> None:
+        """Select an interface link state."""
+        if option not in self.interface_link_options:
+            raise ValueError(f"Unknown interface link option: {option}")
+
+        self._selected_interface_link = option
+        self._notify_listeners()
+
+    @property
+    def interface_speed_duplex_options(self) -> list[str]:
+        """Return speed/duplex combinations currently represented."""
+        values = {
+            label
+            for record in self._interface_records()
+            if (label := self._speed_duplex_label(record)) is not None
+        }
+        return [FILTER_ALL, *sorted(values, key=str.casefold)]
+
+    @property
+    def selected_interface_speed_duplex(self) -> str:
+        """Return the selected speed/duplex combination."""
+        return self._selected_interface_speed_duplex
+
+    def select_interface_speed_duplex(self, option: str) -> None:
+        """Select an interface speed/duplex combination."""
+        if option not in self.interface_speed_duplex_options:
+            raise ValueError(f"Unknown interface speed/duplex option: {option}")
+
+        self._selected_interface_speed_duplex = option
+        self._notify_listeners()
+
+    @property
+    def interface_parent_options(self) -> list[str]:
+        """Return parent interfaces currently represented."""
+        values = {
+            parent.strip()
+            for record in self._interface_records()
+            if isinstance(parent := record.get("interface"), str) and parent.strip()
+        }
+        return [FILTER_ALL, *sorted(values, key=str.casefold)]
+
+    @property
+    def selected_interface_parent(self) -> str:
+        """Return the selected parent interface."""
+        return self._selected_interface_parent
+
+    def select_interface_parent(self, option: str) -> None:
+        """Select a parent interface."""
+        if option not in self.interface_parent_options:
+            raise ValueError(f"Unknown parent interface option: {option}")
+
+        self._selected_interface_parent = option
+        self._notify_listeners()
+
+    @property
+    def interface_graph_layout_options(self) -> list[str]:
+        """Return available interface graph layouts."""
+        return [INTERFACE_GRAPH_LAYOUT_COMBINED, INTERFACE_GRAPH_LAYOUT_SEPARATE]
+
+    @property
+    def selected_interface_graph_layout(self) -> str:
+        """Return the selected interface graph layout."""
+        return self._selected_interface_graph_layout
+
+    def select_interface_graph_layout(self, option: str) -> None:
+        """Select how interface history graphs are grouped."""
+        if option not in self.interface_graph_layout_options:
+            raise ValueError(f"Unknown interface graph layout option: {option}")
+
+        self._selected_interface_graph_layout = option
+        self._notify_listeners()
+
+    @property
+    def interface_time_span_options(self) -> list[str]:
+        """Return available interface graph time spans."""
+        return list(GRAPH_TIME_SPAN_OPTIONS)
+
+    @property
+    def selected_interface_time_span(self) -> str:
+        """Return the selected interface graph time span."""
+        return self._selected_interface_time_span
+
+    def select_interface_time_span(self, option: str) -> None:
+        """Select the interface graph history window."""
+        if option not in self.interface_time_span_options:
+            raise ValueError(f"Unknown interface time span option: {option}")
+
+        self._selected_interface_time_span = option
         self._notify_listeners()

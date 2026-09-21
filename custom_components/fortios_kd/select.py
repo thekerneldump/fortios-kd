@@ -34,10 +34,24 @@ async def async_setup_entry(
             FortiOSKDFilterSelect(manager, "arp_lease_type"),
             FortiOSKDFilterSelect(manager, "dhcp_fortigate"),
             FortiOSKDFilterSelect(manager, "dhcp_interface"),
+            FortiOSKDFilterSelect(manager, "device_fortigate"),
+            FortiOSKDFilterSelect(manager, "device_hardware_vendor"),
+            FortiOSKDFilterSelect(manager, "device_hardware_type"),
+            FortiOSKDFilterSelect(manager, "device_hardware_family"),
+            FortiOSKDFilterSelect(manager, "device_operating_system"),
+            FortiOSKDFilterSelect(manager, "device_software_version"),
+            FortiOSKDFilterSelect(manager, "device_interface"),
+            FortiOSKDFilterSelect(manager, "device_last_seen"),
             FortiOSKDFilterSelect(manager, "vdom_fortigate"),
             FortiOSKDFilterSelect(manager, "vdom"),
             FortiOSKDFilterSelect(manager, "vdom_graph_layout"),
             FortiOSKDFilterSelect(manager, "vdom_time_span"),
+            FortiOSKDFilterSelect(manager, "interface_fortigate"),
+            FortiOSKDFilterSelect(manager, "interface_link"),
+            FortiOSKDFilterSelect(manager, "interface_speed_duplex"),
+            FortiOSKDFilterSelect(manager, "interface_parent"),
+            FortiOSKDFilterSelect(manager, "interface_graph_layout"),
+            FortiOSKDFilterSelect(manager, "interface_time_span"),
         ]
     )
 
@@ -68,10 +82,24 @@ class FortiOSKDFilterSelect(SelectEntity):
             "arp_lease_type": "ARP Table Lease Type Filter",
             "dhcp_fortigate": "DHCP Entries FortiGate Filter",
             "dhcp_interface": "DHCP Entries Interface Filter",
+            "device_fortigate": "Device Table FortiGate Filter",
+            "device_hardware_vendor": "Device Table Hardware Vendor Filter",
+            "device_hardware_type": "Device Table Hardware Type Filter",
+            "device_hardware_family": "Device Table Hardware Family Filter",
+            "device_operating_system": "Device Table Operating System Filter",
+            "device_software_version": "Device Table Software Version Filter",
+            "device_interface": "Device Table Interface Filter",
+            "device_last_seen": "Device Table Last Seen Filter",
             "vdom_fortigate": "VDOM Resources Firewall Filter",
             "vdom": "VDOM Resources VDOM Filter",
             "vdom_graph_layout": "VDOM Resources Graph Layout",
             "vdom_time_span": "VDOM Resources Time Span",
+            "interface_fortigate": "Interface Graphs Firewall Filter",
+            "interface_link": "Interface Graphs Link Filter",
+            "interface_speed_duplex": "Interface Graphs Speed and Duplex Filter",
+            "interface_parent": "Interface Graphs Parent Interface Filter",
+            "interface_graph_layout": "Interface Graphs Graph Layout",
+            "interface_time_span": "Interface Graphs Time Span",
         }[filter_type]
         self._attr_icon = {
             "fortigate": "mdi:shield-router",
@@ -85,113 +113,42 @@ class FortiOSKDFilterSelect(SelectEntity):
             "arp_lease_type": "mdi:ip-check",
             "dhcp_fortigate": "mdi:shield-router",
             "dhcp_interface": "mdi:lan-connect",
+            "device_fortigate": "mdi:shield-router",
+            "device_hardware_vendor": "mdi:factory",
+            "device_hardware_type": "mdi:devices",
+            "device_hardware_family": "mdi:devices",
+            "device_operating_system": "mdi:laptop",
+            "device_software_version": "mdi:update",
+            "device_interface": "mdi:lan-connect",
+            "device_last_seen": "mdi:clock-outline",
             "vdom_fortigate": "mdi:shield-router",
             "vdom": "mdi:server-network",
             "vdom_graph_layout": "mdi:view-dashboard-variant",
             "vdom_time_span": "mdi:clock-outline",
+            "interface_fortigate": "mdi:shield-router",
+            "interface_link": "mdi:lan-connect",
+            "interface_speed_duplex": "mdi:speedometer",
+            "interface_parent": "mdi:lan-pending",
+            "interface_graph_layout": "mdi:view-dashboard-variant",
+            "interface_time_span": "mdi:clock-outline",
         }[filter_type]
 
     @property
     @override
     def options(self) -> list[str]:
         """Return the available filter options."""
-        if self._filter_type == "fortigate":
-            return self._manager.fortigate_options
-        if self._filter_type == "access_point":
-            return self._manager.access_point_options
-        if self._filter_type == "ssid":
-            return self._manager.ssid_options
-        if self._filter_type == "area":
-            return self._manager.area_options
-        if self._filter_type == "label":
-            return self._manager.label_options
-        if self._filter_type == "wifi_graph_time_span":
-            return self._manager.wifi_graph_time_span_options
-        if self._filter_type == "arp_fortigate":
-            return self._manager.arp_fortigate_options
-        if self._filter_type == "arp_interface":
-            return self._manager.arp_interface_options
-        if self._filter_type == "arp_lease_type":
-            return self._manager.arp_lease_type_options
-        if self._filter_type == "dhcp_fortigate":
-            return self._manager.dhcp_fortigate_options
-        if self._filter_type == "dhcp_interface":
-            return self._manager.dhcp_interface_options
-        if self._filter_type == "vdom_fortigate":
-            return self._manager.vdom_fortigate_options
-        if self._filter_type == "vdom":
-            return self._manager.vdom_options
-        if self._filter_type == "vdom_graph_layout":
-            return self._manager.vdom_graph_layout_options
-        return self._manager.vdom_time_span_options
+        return getattr(self._manager, f"{self._filter_type}_options")
 
     @property
     @override
     def current_option(self) -> str:
         """Return the selected filter option."""
-        if self._filter_type == "fortigate":
-            return self._manager.selected_fortigate
-        if self._filter_type == "access_point":
-            return self._manager.selected_access_point
-        if self._filter_type == "ssid":
-            return self._manager.selected_ssid
-        if self._filter_type == "area":
-            return self._manager.selected_area
-        if self._filter_type == "label":
-            return self._manager.selected_label
-        if self._filter_type == "wifi_graph_time_span":
-            return self._manager.selected_wifi_graph_time_span
-        if self._filter_type == "arp_fortigate":
-            return self._manager.selected_arp_fortigate
-        if self._filter_type == "arp_interface":
-            return self._manager.selected_arp_interface
-        if self._filter_type == "arp_lease_type":
-            return self._manager.selected_arp_lease_type
-        if self._filter_type == "dhcp_fortigate":
-            return self._manager.selected_dhcp_fortigate
-        if self._filter_type == "dhcp_interface":
-            return self._manager.selected_dhcp_interface
-        if self._filter_type == "vdom_fortigate":
-            return self._manager.selected_vdom_fortigate
-        if self._filter_type == "vdom":
-            return self._manager.selected_vdom
-        if self._filter_type == "vdom_graph_layout":
-            return self._manager.selected_vdom_graph_layout
-        return self._manager.selected_vdom_time_span
+        return getattr(self._manager, f"selected_{self._filter_type}")
 
     @override
     async def async_select_option(self, option: str) -> None:
         """Select a filter option."""
-        if self._filter_type == "fortigate":
-            self._manager.select_fortigate(option)
-        elif self._filter_type == "access_point":
-            self._manager.select_access_point(option)
-        elif self._filter_type == "ssid":
-            self._manager.select_ssid(option)
-        elif self._filter_type == "area":
-            self._manager.select_area(option)
-        elif self._filter_type == "label":
-            self._manager.select_label(option)
-        elif self._filter_type == "wifi_graph_time_span":
-            self._manager.select_wifi_graph_time_span(option)
-        elif self._filter_type == "arp_fortigate":
-            self._manager.select_arp_fortigate(option)
-        elif self._filter_type == "arp_interface":
-            self._manager.select_arp_interface(option)
-        elif self._filter_type == "arp_lease_type":
-            self._manager.select_arp_lease_type(option)
-        elif self._filter_type == "dhcp_fortigate":
-            self._manager.select_dhcp_fortigate(option)
-        elif self._filter_type == "dhcp_interface":
-            self._manager.select_dhcp_interface(option)
-        elif self._filter_type == "vdom_fortigate":
-            self._manager.select_vdom_fortigate(option)
-        elif self._filter_type == "vdom":
-            self._manager.select_vdom(option)
-        elif self._filter_type == "vdom_graph_layout":
-            self._manager.select_vdom_graph_layout(option)
-        else:
-            self._manager.select_vdom_time_span(option)
+        getattr(self._manager, f"select_{self._filter_type}")(option)
 
     @override
     async def async_added_to_hass(self) -> None:
