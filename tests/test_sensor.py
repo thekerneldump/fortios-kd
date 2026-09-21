@@ -216,6 +216,7 @@ def test_dns_server_entities_are_linked_through_vdom_device() -> None:
         "latency_available": True,
         "latency": 30,
         "last_tested": last_tested,
+        "latency_stale": False,
     }
     coordinator = Mock()
     coordinator.last_update_success = True
@@ -263,7 +264,6 @@ def test_dns_server_entities_are_linked_through_vdom_device() -> None:
     assert summary.device_info["identifiers"] == {("fortios_kd", "FGT123_vdom_root")}
     assert summary.extra_state_attributes["dns_server_count"] == 1
 
-    record["latency_available"] = False
     latency_entity = next(entity for entity in entities if entity.name == "Latency")
     ip_entity = next(entity for entity in entities if entity.name == "IP address")
 
@@ -275,6 +275,17 @@ def test_dns_server_entities_are_linked_through_vdom_device() -> None:
         "fortios_kd_metric": "dns_latency",
         "fortios_kd_scope": "dns_server",
     }
+
+    last_tested_entity = next(
+        entity for entity in entities if entity.name == "Last tested"
+    )
+    record["latency_stale"] = True
+
+    assert not latency_entity.available
+    assert last_tested_entity.available
+
+    record["latency_stale"] = False
+    record["latency_available"] = False
 
     assert not latency_entity.available
     assert ip_entity.available

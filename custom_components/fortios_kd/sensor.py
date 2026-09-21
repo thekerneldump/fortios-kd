@@ -1441,7 +1441,13 @@ class FortiGateDNSServerMetric(FortiGateChangedCoordinatorSensor):
         if not super().available or record is None:
             return False
 
-        if self._field in {"latency", "last_tested"}:
+        if self._field == "latency":
+            return (
+                bool(record.get("latency_available"))
+                and not bool(record.get("latency_stale"))
+                and self.native_value is not None
+            )
+        if self._field == "last_tested":
             return (
                 bool(record.get("latency_available")) and self.native_value is not None
             )

@@ -9,6 +9,15 @@ const STRATEGY_ELEMENT =
 const FILTER_ALL = "All";
 const GRAPH_LAYOUT_COMBINED = "Combined by resource";
 const GRAPH_LAYOUT_SEPARATE = "Separate by VDOM";
+const TIME_SPAN_HOURS = new Map([
+  ["1 week", 168],
+  ["1 day", 24],
+  ["12 hours", 12],
+  ["6 hours", 6],
+  ["3 hours", 3],
+  ["1 hour", 1],
+  ["30 min", 0.5],
+]);
 const FILTER_DEFAULTS = new Set([
   FILTER_ALL,
   "unknown",
@@ -174,12 +183,22 @@ function vdomResourceModel(hass) {
     hass,
     "select.vdom_resources_graph_layout",
   );
+  const selectedTimeSpan = selectedFilter(
+    hass,
+    "select.vdom_resources_time_span",
+  );
+  const hoursToShow = TIME_SPAN_HOURS.get(selectedTimeSpan) ?? 1;
   const graphLayout =
     selectedLayout === GRAPH_LAYOUT_SEPARATE
       ? GRAPH_LAYOUT_SEPARATE
       : GRAPH_LAYOUT_COMBINED;
   const matchingEntities = [];
-  const signatureParts = [selectedFortigate, selectedVdom, graphLayout];
+  const signatureParts = [
+    selectedFortigate,
+    selectedVdom,
+    graphLayout,
+    selectedTimeSpan,
+  ];
 
   for (const state of Object.values(hass.states)) {
     const metric = state.attributes.fortios_kd_metric;
@@ -290,7 +309,7 @@ function vdomResourceModel(hass) {
               {
                 type: "history-graph",
                 title: graph.title,
-                hours_to_show: 24,
+                hours_to_show: hoursToShow,
                 expand_legend: graph.metric === "dns_latency",
                 entities: items.map((item) => ({
                   entity: item.entityId,
@@ -331,7 +350,7 @@ function vdomResourceModel(hass) {
                     {
                       type: "history-graph",
                       title: graph.title,
-                      hours_to_show: 24,
+                      hours_to_show: hoursToShow,
                       expand_legend: true,
                       entities,
                     },
@@ -580,6 +599,10 @@ function dashboardView() {
               {
                 entity: "select.vdom_resources_graph_layout",
                 name: "Graph layout",
+              },
+              {
+                entity: "select.vdom_resources_time_span",
+                name: "Time span",
               },
             ],
             grid_options: { columns: "full" },

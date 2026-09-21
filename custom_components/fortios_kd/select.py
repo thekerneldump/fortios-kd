@@ -28,6 +28,7 @@ async def async_setup_entry(
             FortiOSKDFilterSelect(manager, "ssid"),
             FortiOSKDFilterSelect(manager, "area"),
             FortiOSKDFilterSelect(manager, "label"),
+            FortiOSKDFilterSelect(manager, "wifi_graph_time_span"),
             FortiOSKDFilterSelect(manager, "arp_fortigate"),
             FortiOSKDFilterSelect(manager, "arp_interface"),
             FortiOSKDFilterSelect(manager, "arp_lease_type"),
@@ -36,6 +37,7 @@ async def async_setup_entry(
             FortiOSKDFilterSelect(manager, "vdom_fortigate"),
             FortiOSKDFilterSelect(manager, "vdom"),
             FortiOSKDFilterSelect(manager, "vdom_graph_layout"),
+            FortiOSKDFilterSelect(manager, "vdom_time_span"),
         ]
     )
 
@@ -60,6 +62,7 @@ class FortiOSKDFilterSelect(SelectEntity):
             "ssid": "Wifi Client SSID Filter",
             "area": "Wifi Client Area Filter",
             "label": "Wifi Client Label Filter",
+            "wifi_graph_time_span": "Wifi Graphs Time Span",
             "arp_fortigate": "ARP Table FortiGate Filter",
             "arp_interface": "ARP Table Interface Filter",
             "arp_lease_type": "ARP Table Lease Type Filter",
@@ -68,6 +71,7 @@ class FortiOSKDFilterSelect(SelectEntity):
             "vdom_fortigate": "VDOM Resources Firewall Filter",
             "vdom": "VDOM Resources VDOM Filter",
             "vdom_graph_layout": "VDOM Resources Graph Layout",
+            "vdom_time_span": "VDOM Resources Time Span",
         }[filter_type]
         self._attr_icon = {
             "fortigate": "mdi:shield-router",
@@ -75,6 +79,7 @@ class FortiOSKDFilterSelect(SelectEntity):
             "ssid": "mdi:wifi",
             "area": "mdi:floor-plan",
             "label": "mdi:label",
+            "wifi_graph_time_span": "mdi:clock-outline",
             "arp_fortigate": "mdi:shield-router",
             "arp_interface": "mdi:lan-connect",
             "arp_lease_type": "mdi:ip-check",
@@ -83,6 +88,7 @@ class FortiOSKDFilterSelect(SelectEntity):
             "vdom_fortigate": "mdi:shield-router",
             "vdom": "mdi:server-network",
             "vdom_graph_layout": "mdi:view-dashboard-variant",
+            "vdom_time_span": "mdi:clock-outline",
         }[filter_type]
 
     @property
@@ -99,6 +105,8 @@ class FortiOSKDFilterSelect(SelectEntity):
             return self._manager.area_options
         if self._filter_type == "label":
             return self._manager.label_options
+        if self._filter_type == "wifi_graph_time_span":
+            return self._manager.wifi_graph_time_span_options
         if self._filter_type == "arp_fortigate":
             return self._manager.arp_fortigate_options
         if self._filter_type == "arp_interface":
@@ -113,7 +121,9 @@ class FortiOSKDFilterSelect(SelectEntity):
             return self._manager.vdom_fortigate_options
         if self._filter_type == "vdom":
             return self._manager.vdom_options
-        return self._manager.vdom_graph_layout_options
+        if self._filter_type == "vdom_graph_layout":
+            return self._manager.vdom_graph_layout_options
+        return self._manager.vdom_time_span_options
 
     @property
     @override
@@ -129,6 +139,8 @@ class FortiOSKDFilterSelect(SelectEntity):
             return self._manager.selected_area
         if self._filter_type == "label":
             return self._manager.selected_label
+        if self._filter_type == "wifi_graph_time_span":
+            return self._manager.selected_wifi_graph_time_span
         if self._filter_type == "arp_fortigate":
             return self._manager.selected_arp_fortigate
         if self._filter_type == "arp_interface":
@@ -143,7 +155,9 @@ class FortiOSKDFilterSelect(SelectEntity):
             return self._manager.selected_vdom_fortigate
         if self._filter_type == "vdom":
             return self._manager.selected_vdom
-        return self._manager.selected_vdom_graph_layout
+        if self._filter_type == "vdom_graph_layout":
+            return self._manager.selected_vdom_graph_layout
+        return self._manager.selected_vdom_time_span
 
     @override
     async def async_select_option(self, option: str) -> None:
@@ -158,6 +172,8 @@ class FortiOSKDFilterSelect(SelectEntity):
             self._manager.select_area(option)
         elif self._filter_type == "label":
             self._manager.select_label(option)
+        elif self._filter_type == "wifi_graph_time_span":
+            self._manager.select_wifi_graph_time_span(option)
         elif self._filter_type == "arp_fortigate":
             self._manager.select_arp_fortigate(option)
         elif self._filter_type == "arp_interface":
@@ -172,8 +188,10 @@ class FortiOSKDFilterSelect(SelectEntity):
             self._manager.select_vdom_fortigate(option)
         elif self._filter_type == "vdom":
             self._manager.select_vdom(option)
-        else:
+        elif self._filter_type == "vdom_graph_layout":
             self._manager.select_vdom_graph_layout(option)
+        else:
+            self._manager.select_vdom_time_span(option)
 
     @override
     async def async_added_to_hass(self) -> None:
