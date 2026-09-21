@@ -64,14 +64,22 @@ function clientModel(hass) {
   );
   const unavailableMode = selectedSsid === "Unavailable Clients";
   const devices = registryValues(hass.devices);
-  const macStates = Object.values(hass.states)
-    .filter(
-      (state) =>
-        state.attributes.fortios_kd_entry_type === "wifi_client" &&
-        state.entity_id.startsWith("sensor.wifi_client_") &&
-        state.entity_id.endsWith("_mac_address"),
-    )
-    .sort((left, right) => left.entity_id.localeCompare(right.entity_id));
+  const clientBases = new Set();
+  for (const state of Object.values(hass.states)) {
+    if (!state.entity_id.startsWith("sensor.wifi_client_")) {
+      continue;
+    }
+    if (state.entity_id.endsWith("_last_known_mac")) {
+      clientBases.add(state.entity_id.slice(0, -"_last_known_mac".length));
+      continue;
+    }
+    if (
+      state.attributes.fortios_kd_entry_type === "wifi_client" &&
+      state.entity_id.endsWith("_mac_address")
+    ) {
+      clientBases.add(state.entity_id.slice(0, -"_mac_address".length));
+    }
+  }
   const cards = [];
   const signatureParts = [
     selectedFortigate,
@@ -81,8 +89,11 @@ function clientModel(hass) {
     selectedLabel,
   ];
 
-  for (const macState of macStates) {
-    const base = macState.entity_id.slice(0, -"_mac_address".length);
+  for (const base of [...clientBases].sort()) {
+    const macState = hass.states[`${base}_mac_address`];
+    const lastKnownMacState = hass.states[`${base}_last_known_mac`];
+    const clientUnavailable =
+      !macState || ["unknown", "unavailable"].includes(macState.state);
     const hostname = stateValue(hass, `${base}_hostname`);
     const lastKnownHostname = stateValue(
       hass,
@@ -91,7 +102,10 @@ function clientModel(hass) {
     const reportedFortigateName = stateValue(hass, `${base}_fortigate`);
     const accessPoint = stateValue(hass, `${base}_ap_name`);
     const ssid = stateValue(hass, `${base}_ssid`);
-    const entity = registryEntry(hass.entities, macState.entity_id);
+    const entity = registryEntry(
+      hass.entities,
+      macState?.entity_id || lastKnownMacState?.entity_id,
+    );
     const clientDevice = registryEntry(hass.devices, entity?.device_id);
     const areaId = entity?.area_id || clientDevice?.area_id;
     const areaName = registryName(registryEntry(hass.areas, areaId));
@@ -118,7 +132,7 @@ function clientModel(hass) {
       (selectedLabel === "No Labels" && !labels.length) ||
       labels.includes(selectedLabel);
     const ssidMatches = unavailableMode
-      ? macState.state === "unavailable"
+      ? clientUnavailable
       : matchesFilter(selectedSsid, ssid);
     const title = !FILTER_DEFAULTS.has(hostname)
       ? hostname
@@ -127,8 +141,10 @@ function clientModel(hass) {
         : "Wifi Client";
 
     signatureParts.push(
-      macState.entity_id,
-      macState.state,
+      macState?.entity_id || "",
+      macState?.state || "unavailable",
+      lastKnownMacState?.entity_id || "",
+      lastKnownMacState?.state || "",
       hostname,
       lastKnownHostname,
       fortigateName,
@@ -181,7 +197,7 @@ function clientModel(hass) {
     rows.push(
       { type: "section", label: `Area: ${areaText}` },
       { type: "section", label: `Labels: ${labelText}` },
-      { entity: macState.entity_id, name: "MAC address" },
+      { entity: `${base}_mac_address`, name: "MAC address" },
       { entity: `${base}_last_known_mac`, name: "Last Known MAC" },
       { entity: `${base}_ip_address`, name: "IP address" },
     );

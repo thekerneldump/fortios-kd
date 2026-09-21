@@ -435,13 +435,14 @@ async def test_select_entities(hass: Any) -> None:
         labels={label.label_id},
     )
 
-    assert len(entities) == 13
+    assert len(entities) == 15
     (
         fortigate,
         access_point,
         ssid,
         area_filter,
         label_filter,
+        wifi_graph_time_span,
         arp_fortigate,
         arp_interface,
         arp_lease_type,
@@ -450,6 +451,7 @@ async def test_select_entities(hass: Any) -> None:
         vdom_fortigate,
         vdom_filter,
         vdom_graph_layout,
+        vdom_time_span,
     ) = entities
     assert fortigate.options == ["All", "AlphaGate", "BetaGate"]
 
@@ -463,6 +465,19 @@ async def test_select_entities(hass: Any) -> None:
     await label_filter.async_select_option("Trusted")
     assert manager.selected_area == "Office"
     assert manager.selected_label == "Trusted"
+
+    assert wifi_graph_time_span.options == [
+        "1 week",
+        "1 day",
+        "12 hours",
+        "6 hours",
+        "3 hours",
+        "1 hour",
+        "30 min",
+    ]
+    assert wifi_graph_time_span.current_option == "1 hour"
+    await wifi_graph_time_span.async_select_option("6 hours")
+    assert manager.selected_wifi_graph_time_span == "6 hours"
 
     assert arp_fortigate.options == ["All", "AlphaGate", "BetaGate"]
     await arp_fortigate.async_select_option("AlphaGate")
@@ -494,6 +509,18 @@ async def test_select_entities(hass: Any) -> None:
     assert vdom_graph_layout.current_option == "Combined by resource"
     await vdom_graph_layout.async_select_option("Separate by VDOM")
     assert manager.selected_vdom_graph_layout == "Separate by VDOM"
+    assert vdom_time_span.options == [
+        "1 week",
+        "1 day",
+        "12 hours",
+        "6 hours",
+        "3 hours",
+        "1 hour",
+        "30 min",
+    ]
+    assert vdom_time_span.current_option == "1 hour"
+    await vdom_time_span.async_select_option("30 min")
+    assert manager.selected_vdom_time_span == "30 min"
 
     duplicate_entities: list[Any] = []
     await async_setup_entry(

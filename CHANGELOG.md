@@ -3,6 +3,29 @@
 Notable changes and deliberate compatibility, security, and privacy decisions
 are recorded here for each release.
 
+## 0.7.1 - 2026-09-20
+
+### Added
+
+- Add independent time-span pickers to the **KD VDOM Resources** and **KD Wifi
+  Graphs** dashboards. Available views are 1 week, 1 day, 12 hours, 6 hours,
+  3 hours, 1 hour, and 30 minutes. Each dashboard defaults to 1 hour, and its
+  selection applies to every graph on that dashboard.
+
+### Changed
+
+- Stop reporting an individual DNS server's latency when FortiGate has not
+  updated the measurement for more than one hour. The **Last tested** diagnostic
+  remains available, preventing stale timeout penalties from appearing as
+  current latency.
+
+### Fixed
+
+- Restore the **Unavailable Clients** filter on the **KD Wifi Clients**
+  dashboard. Disconnected clients are now discovered through their durable
+  **Last Known MAC** entities, while their current MAC entities determine
+  connection availability.
+
 ## 0.7.0 - 2026-09-19
 
 ### Added

@@ -149,8 +149,32 @@ def test_dns_configuration_and_latency_normalization() -> None:
             "last_tested": (observed_at - timedelta(milliseconds=2410)).replace(
                 microsecond=0
             ),
+            "latency_stale": False,
         }
     }
+
+    stale_latency = _dns_latency_results(
+        {
+            "vdom": "root",
+            "results": [
+                {
+                    "latency": 14940,
+                    "last_update": 3_600_000,
+                    "ip": "203.0.113.54",
+                },
+                {
+                    "latency": 14940,
+                    "last_update": 3_600_001,
+                    "ip": "203.0.113.55",
+                },
+            ],
+        },
+        observed_at,
+    )
+
+    assert stale_latency is not None
+    assert stale_latency[("root", "203.0.113.54")]["latency_stale"] is False
+    assert stale_latency[("root", "203.0.113.55")]["latency_stale"] is True
 
 
 async def test_monitor_api(

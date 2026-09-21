@@ -24,6 +24,16 @@ FILTER_RESERVED = "Reserved"
 FILTER_LEASED = "Leased"
 VDOM_GRAPH_LAYOUT_COMBINED = "Combined by resource"
 VDOM_GRAPH_LAYOUT_SEPARATE = "Separate by VDOM"
+GRAPH_TIME_SPAN_OPTIONS = (
+    "1 week",
+    "1 day",
+    "12 hours",
+    "6 hours",
+    "3 hours",
+    "1 hour",
+    "30 min",
+)
+GRAPH_TIME_SPAN_DEFAULT = "1 hour"
 CLIENT_IDENTIFIER_MARKER = "_wifi_client_"
 
 
@@ -54,6 +64,7 @@ class FortiOSKDFilterManager:
         self._selected_ssid = FILTER_ALL
         self._selected_area = FILTER_ALL
         self._selected_label = FILTER_ALL
+        self._selected_wifi_graph_time_span = GRAPH_TIME_SPAN_DEFAULT
         self._selected_arp_fortigate = FILTER_ALL
         self._selected_arp_interface = FILTER_ALL
         self._selected_arp_lease_type = FILTER_ALL
@@ -62,6 +73,7 @@ class FortiOSKDFilterManager:
         self._selected_vdom_fortigate = FILTER_ALL
         self._selected_vdom = FILTER_ALL
         self._selected_vdom_graph_layout = VDOM_GRAPH_LAYOUT_COMBINED
+        self._selected_vdom_time_span = GRAPH_TIME_SPAN_DEFAULT
         self._listeners: set[Callable[[], None]] = set()
         self._owner_entry_id: str | None = None
         self._remove_registry_listeners = [
@@ -696,4 +708,40 @@ class FortiOSKDFilterManager:
             raise ValueError(f"Unknown VDOM graph layout option: {option}")
 
         self._selected_vdom_graph_layout = option
+        self._notify_listeners()
+
+    @property
+    def wifi_graph_time_span_options(self) -> list[str]:
+        """Return the available Wifi graph time spans."""
+        return list(GRAPH_TIME_SPAN_OPTIONS)
+
+    @property
+    def selected_wifi_graph_time_span(self) -> str:
+        """Return the selected Wifi graph time span."""
+        return self._selected_wifi_graph_time_span
+
+    def select_wifi_graph_time_span(self, option: str) -> None:
+        """Select the Wifi graph history window."""
+        if option not in self.wifi_graph_time_span_options:
+            raise ValueError(f"Unknown Wifi graph time span option: {option}")
+
+        self._selected_wifi_graph_time_span = option
+        self._notify_listeners()
+
+    @property
+    def vdom_time_span_options(self) -> list[str]:
+        """Return the available VDOM resource graph time spans."""
+        return list(GRAPH_TIME_SPAN_OPTIONS)
+
+    @property
+    def selected_vdom_time_span(self) -> str:
+        """Return the selected VDOM resource graph time span."""
+        return self._selected_vdom_time_span
+
+    def select_vdom_time_span(self, option: str) -> None:
+        """Select the VDOM resource graph history window."""
+        if option not in self.vdom_time_span_options:
+            raise ValueError(f"Unknown VDOM time span option: {option}")
+
+        self._selected_vdom_time_span = option
         self._notify_listeners()

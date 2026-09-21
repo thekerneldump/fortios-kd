@@ -62,6 +62,15 @@ const GRAPH_GROUPS = {
 };
 const BANDS = ["2.4 GHz", "5 GHz"];
 const STRATEGY_ELEMENT = "ll-strategy-dashboard-fortios-kd-wifi-graphs";
+const TIME_SPAN_HOURS = new Map([
+  ["1 week", 168],
+  ["1 day", 24],
+  ["12 hours", 12],
+  ["6 hours", 6],
+  ["3 hours", 3],
+  ["1 hour", 1],
+  ["30 min", 0.5],
+]);
 
 class FortiOSKDWifiGraphsDashboardStrategy extends HTMLElement {
   static getCreateSuggestions(_hass) {
@@ -178,6 +187,11 @@ function graphModel(hass, group) {
     "select.wifi_client_ap_filter",
   );
   const selectedSsid = selectedFilter(hass, "select.wifi_client_ssid_filter");
+  const selectedTimeSpan = selectedFilter(
+    hass,
+    "select.wifi_graphs_time_span",
+  );
+  const hoursToShow = TIME_SPAN_HOURS.get(selectedTimeSpan) ?? 1;
   const ssidsByRadio = new Map();
   const ssidsByDevice = new Map();
   const metricStates = [];
@@ -214,6 +228,7 @@ function graphModel(hass, group) {
     selectedFortigate,
     selectedAccessPoint,
     selectedSsid,
+    selectedTimeSpan,
   ];
 
   for (const graph of GRAPH_GROUPS[group] || []) {
@@ -271,7 +286,7 @@ function graphModel(hass, group) {
         cardConfigs.push({
           type: "history-graph",
           title: band ? `${band} ${graph.title}` : graph.title,
-          hours_to_show: 24,
+          hours_to_show: hoursToShow,
           expand_legend: true,
           entities,
         });
@@ -511,6 +526,10 @@ function filterCard() {
       {
         entity: "select.wifi_client_ssid_filter",
         name: "SSID",
+      },
+      {
+        entity: "select.wifi_graphs_time_span",
+        name: "Time span",
       },
     ],
     grid_options: { columns: "full" },

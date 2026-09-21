@@ -24,7 +24,7 @@ async def test_dashboard_strategy_asset(hass: HomeAssistant) -> None:
     assert 'entity: "select.wifi_client_area_filter"' in source
     assert 'entity: "select.wifi_client_label_filter"' in source
     assert "class FortiOSKDWifiClientGrid extends HTMLElement" in source
-    assert "registryEntry(hass.entities, macState.entity_id)" in source
+    assert "macState?.entity_id || lastKnownMacState?.entity_id" in source
     assert "registryEntry(hass.devices, entity?.device_id)" in source
     assert "clientDevice?.via_device_id" in source
     assert 'from "./fortios-kd-preferred-names.js"' in source
@@ -33,6 +33,10 @@ async def test_dashboard_strategy_asset(hass: HomeAssistant) -> None:
     assert 'action_name: "Open FortiGate"' in source
     assert 'selectedSsid === "Unavailable Clients"' in source
     assert 'state.attributes.fortios_kd_entry_type === "wifi_client"' in source
+    assert 'state.entity_id.endsWith("_last_known_mac")' in source
+    assert "const clientUnavailable =" in source
+    assert "? clientUnavailable" in source
+    assert '? macState.state === "unavailable"' not in source
     assert "type: `custom:${CLIENT_CARD_ELEMENT}`" in source
     assert "custom:auto-entities" not in source
     assert "custom:layout-card" not in source
@@ -54,6 +58,13 @@ async def test_wifi_graph_dashboard_strategy_asset(hass: HomeAssistant) -> None:
     assert 'entity: "select.wifi_client_fortigate_filter"' in source
     assert 'entity: "select.wifi_client_ap_filter"' in source
     assert 'entity: "select.wifi_client_ssid_filter"' in source
+    assert 'entity: "select.wifi_graphs_time_span"' in source
+    assert 'name: "Time span"' in source
+    assert '["1 week", 168]' in source
+    assert '["1 hour", 1]' in source
+    assert '["30 min", 0.5]' in source
+    assert "TIME_SPAN_HOURS.get(selectedTimeSpan) ?? 1" in source
+    assert "hours_to_show: hoursToShow" in source
     assert "fortios_kd_metric" in source
     assert "fortios_kd_radio_id" in source
     assert "fortios_kd_band" in source
@@ -240,9 +251,16 @@ async def test_vdom_resource_dashboard_strategy_asset(hass: HomeAssistant) -> No
     assert 'entity: "select.vdom_resources_firewall_filter"' in source
     assert 'entity: "select.vdom_resources_vdom_filter"' in source
     assert 'entity: "select.vdom_resources_graph_layout"' in source
+    assert 'entity: "select.vdom_resources_time_span"' in source
     assert 'name: "Firewall"' in source
     assert 'name: "VDOM"' in source
     assert 'name: "Graph layout"' in source
+    assert 'name: "Time span"' in source
+    assert '["1 week", 168]' in source
+    assert '["1 hour", 1]' in source
+    assert '["30 min", 0.5]' in source
+    assert "TIME_SPAN_HOURS.get(selectedTimeSpan) ?? 1" in source
+    assert "hours_to_show: hoursToShow" in source
     assert 'const isVdomResource = scope === "vdom"' in source
     assert 'scope === "dns_server" && metric === "dns_latency"' in source
     assert "fortios_kd_vdom" in source

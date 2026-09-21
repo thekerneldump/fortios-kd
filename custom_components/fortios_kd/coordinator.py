@@ -19,6 +19,7 @@ from .snmp_arp import FortiOSKDSnmpArpClient, SnmpArpError
 _LOGGER = logging.getLogger(__name__)
 _VDOM_REFRESH_INTERVAL_SECONDS = 300
 _DNS_CONFIGURATION_REFRESH_INTERVAL_SECONDS = 300
+_DNS_LATENCY_MAX_AGE = timedelta(hours=1)
 
 DNSServerKey = tuple[str, str]
 
@@ -215,9 +216,11 @@ def _dns_latency_results(
                 and not isinstance(last_update, bool)
                 and last_update >= 0
             ):
-                record["last_tested"] = (
-                    observed_at - timedelta(milliseconds=last_update)
-                ).replace(microsecond=0)
+                latency_age = timedelta(milliseconds=last_update)
+                record["last_tested"] = (observed_at - latency_age).replace(
+                    microsecond=0
+                )
+                record["latency_stale"] = latency_age > _DNS_LATENCY_MAX_AGE
 
             results[(vdom_name, ip_address)] = record
 

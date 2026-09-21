@@ -151,6 +151,9 @@ permission, DHCP entities remain unavailable without blocking wifi monitoring.
   so the same inherited server remains distinguishable in different VDOMs.
 - DNS devices expose IP address, VDOM, configuration source, configured role,
   current latency in milliseconds, and the calculated last-tested timestamp.
+- A DNS latency measurement becomes unavailable when FortiGate reports that it
+  was last updated more than one hour ago. The Last tested timestamp remains
+  available so stale timeout penalties are not presented as current latency.
 - Configuration source reports **Global** or **VDOM override**, while configured
   role reports **Primary** or **Secondary**. Runtime latency entries enrich
   matching configured servers but do not independently create devices.
@@ -366,8 +369,9 @@ dashboard strategies automatically. After restarting Home Assistant, open
 - **FortiOS KD Wifi Clients** for searchable client cards. Its suggested title
   is **KD Wifi Clients** and its suggested URL is `kd-wifi-clients`.
 - **FortiOS KD Wifi Graphs** for automatically discovered radio throughput and
-  health graphs. Its suggested title is **KD Wifi Graphs** and its suggested URL
-  is `kd-wifi-graphs`.
+  health graphs. An independent Time span picker offers 1 week, 1 day, 12 hours,
+  6 hours, 3 hours, 1 hour, and 30 min views, defaulting to 1 hour. Its suggested
+  title is **KD Wifi Graphs** and its suggested URL is `kd-wifi-graphs`.
 - **FortiOS KD ARP Entries** for current ARP-table devices and their optional
   wifi-client match and IP-conflict diagnostics. Its suggested title is
   **KD ARP Entries** and its suggested URL is `kd-arp-entries`.
@@ -387,8 +391,14 @@ dashboard strategies automatically. After restarting Home Assistant, open
   VDOM filters can display matching VDOMs together for comparison or as
   separate graph groups. Combined DNS legends include the preferred FortiGate
   name when multiple firewalls are visible; filtered and separate-card views
-  use the DNS-server IP alone. Its suggested title is **KD VDOM Resources** and
-  its suggested URL is `kd-vdom-resources`.
+  use the DNS-server IP alone. A Time span picker applies to every graph and
+  offers 1 week, 1 day, 12 hours, 6 hours, 3 hours, 1 hour, and 30 min; the
+  default is 1 hour. Its suggested title is **KD VDOM Resources** and its
+  suggested URL is `kd-vdom-resources`.
+
+  DNS latency stops reporting when FortiGate's measurement is more than one
+  hour old, preventing an old timeout penalty from appearing as current
+  latency. The DNS-server device retains its Last tested diagnostic.
 
   **DNS latency legend note:** In the combined all-firewall view, a label such
   as `Firewall name - DNS IP` may be visually truncated when the available
