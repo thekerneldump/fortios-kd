@@ -551,6 +551,20 @@ Last Known MAC and Last Known Hostname for retained identity. Some connected
 clients do not advertise a hostname, so FortiOS may only return a generic device
 classification or no hostname at all.
 
+### Capture a malformed API response
+
+If FortiOS KD reports that a response contains invalid UTF-8 or invalid JSON,
+open the integration's **Reconfigure** flow and enable **Capture malformed API
+responses**. Choose either the recommended 100-byte context around the invalid
+data or the entire API response, and set the maximum number of captures.
+
+After the error occurs again, use Home Assistant's **Download diagnostics**
+action for that FortiOS KD configuration entry. Captures are kept in memory
+only, stop at the configured limit, and are cleared when the integration reloads
+or Home Assistant restarts. Serial-number fields are redacted, but a response
+can still contain IP addresses, MAC addresses, hostnames, usernames, and SSIDs.
+Review the downloaded JSON before sharing it publicly.
+
 ## Goals
 
 - Extend compatibility to FortiOS 6.0 and newer through version-specific API

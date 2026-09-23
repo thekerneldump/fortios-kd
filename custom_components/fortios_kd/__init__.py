@@ -21,6 +21,9 @@ from homeassistant.helpers.typing import ConfigType
 
 from .api import FortiOSApi
 from .const import (
+    CONF_DEBUG_RESPONSE_CAPTURE,
+    CONF_DEBUG_RESPONSE_CAPTURE_LIMIT,
+    CONF_DEBUG_RESPONSE_CAPTURE_MODE,
     CONF_INCLUDE_UNASSIGNED_SSIDS,
     CONF_MASK_AP_NAMES,
     CONF_MASK_SERIAL_NUMBERS,
@@ -35,6 +38,9 @@ from .const import (
     CONF_SYNC_DHCP_LEASES,
     CONF_SYNC_INTERFACES,
     DATA_FILTER_MANAGER,
+    DEFAULT_DEBUG_RESPONSE_CAPTURE,
+    DEFAULT_DEBUG_RESPONSE_CAPTURE_LIMIT,
+    DEFAULT_DEBUG_RESPONSE_CAPTURE_MODE,
     DEFAULT_INCLUDE_UNASSIGNED_SSIDS,
     DEFAULT_MASK_AP_NAMES,
     DEFAULT_MASK_SERIAL_NUMBERS,
@@ -50,6 +56,7 @@ from .const import (
     DOMAIN,
 )
 from .coordinator import FortiOSKDCoordinator
+from .debug import FortiOSDebugCaptureStore
 from .filter_manager import FortiOSKDFilterManager
 from .frontend import async_register_dashboard_strategy
 from .organization import FortiOSKDOrganizationManager
@@ -128,6 +135,26 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Connect to the FortiGate."""
+    debug_capture_store = FortiOSDebugCaptureStore(
+        enabled=bool(
+            entry.data.get(
+                CONF_DEBUG_RESPONSE_CAPTURE,
+                DEFAULT_DEBUG_RESPONSE_CAPTURE,
+            )
+        ),
+        mode=str(
+            entry.data.get(
+                CONF_DEBUG_RESPONSE_CAPTURE_MODE,
+                DEFAULT_DEBUG_RESPONSE_CAPTURE_MODE,
+            )
+        ),
+        limit=int(
+            entry.data.get(
+                CONF_DEBUG_RESPONSE_CAPTURE_LIMIT,
+                DEFAULT_DEBUG_RESPONSE_CAPTURE_LIMIT,
+            )
+        ),
+    )
     client = FortiOSApi(
         async_get_clientsession(hass),
         entry.data[CONF_HOST],
@@ -135,6 +162,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry.data[CONF_API_KEY],
         entry.data[CONF_VERIFY_SSL],
         entry.data.get(CONF_REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT),
+        debug_capture_store,
     )
 
     try:
@@ -209,6 +237,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         DEFAULT_MASK_SERIAL_NUMBERS,
     )
     fortigate_serial = str(status["serial"])
+    debug_capture_store.set_fortigate_serial(fortigate_serial)
     displayed_fortigate_hostname = (
         mask_name(fortigate_hostname) if mask_serial_numbers else fortigate_hostname
     )
@@ -243,6 +272,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "fortigate_default_preferred_name": default_preferred_name,
         "fortigate_preferred_name": preferred_name,
         "organization_manager": organization_manager,
+        "debug_capture_store": debug_capture_store,
     }
     organization_manager.setup()
 

@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from aiohttp import ClientSession
+from custom_components.fortios_kd.debug import FortiOSDebugCaptureStore
 
 from .client import FortiOSHttpClient
 from .configuration import FortiOSConfigurationApi
@@ -26,6 +27,7 @@ class FortiOSApi:
         api_key: str,
         verify_ssl: bool,
         request_timeout: int = 60,
+        debug_capture_store: FortiOSDebugCaptureStore | None = None,
     ) -> None:
         """Initialize the FortiOS API."""
         self.context = FortiOSApiContext()
@@ -38,6 +40,7 @@ class FortiOSApi:
             verify_ssl,
             request_timeout,
             self._observe_response,
+            debug_capture_store,
         )
         self.configuration = FortiOSConfigurationApi(self._http, self.context)
         self.monitor = FortiOSMonitorApi(self._http, self.context)

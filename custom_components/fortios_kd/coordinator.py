@@ -521,6 +521,7 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._radio_counters: dict[tuple[str, int, str], tuple[int, float]] = {}
         self._wifi_clients_by_mac: dict[str, dict[str, Any]] = {}
         self._wifi_clients_by_ip: dict[str, list[dict[str, Any]]] = {}
+        self._wifi_clients_error_logged = False
         self._arp_entries_by_mac: dict[str, list[dict[str, Any]]] = {}
         self._arp_entries_by_ip: dict[str, list[dict[str, Any]]] = {}
         self._dhcp_entries_by_mac: dict[str, list[dict[str, Any]]] = {}
@@ -1641,7 +1642,17 @@ class FortiOSKDCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             data = await self.client.monitor.wifi.get_managed_access_points()
             platforms = self._annotate_access_points(data)
             await self._async_load_ap_channel_capabilities(platforms)
-            wifi_clients = await self.client.monitor.wifi.get_clients()
+            try:
+                wifi_clients = await self.client.monitor.wifi.get_clients()
+            except (ClientError, TimeoutError) as err:
+                wifi_clients = {"results": [], "available": False}
+                if not self._wifi_clients_error_logged:
+                    _LOGGER.warning(
+                        "Unable to load FortiGate wifi clients; other FortiGate "
+                        "data will continue updating: %s",
+                        err,
+                    )
+                    self._wifi_clients_error_logged = True
             arp_table = await self._async_get_arp_table()
             dhcp_leases = await self._async_get_dhcp_leases()
             device_inventory = await self._async_get_device_inventory()

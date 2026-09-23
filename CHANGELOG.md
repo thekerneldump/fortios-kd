@@ -3,6 +3,20 @@
 Notable changes and deliberate compatibility, security, and privacy decisions
 are recorded here for each release.
 
+## 0.7.3-beta.1 - 2026-09-22
+
+Debugging release for [issue #11](https://github.com/thekerneldump/fortios-kd/issues/11).
+
+- Adds opt-in capture of malformed API responses. Users can collect either 100
+  bytes before and after the invalid data or the complete response, with a
+  configurable capture limit that defaults to three.
+- Captures are kept in memory, redact serial numbers, and can be extracted with
+  Home Assistant's **Download diagnostics** action. Full responses may still
+  contain private network information and should be reviewed before sharing.
+- Repairs isolated invalid UTF-8 bytes when the resulting response remains valid
+  JSON. Wi-Fi response failures no longer make VDOMs and unrelated data
+  unavailable.
+
 ## 0.7.2 - 2026-09-21
 
 ### Added
