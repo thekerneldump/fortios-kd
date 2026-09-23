@@ -1212,6 +1212,63 @@ async def test_dhcp_failure_does_not_block_wifi_updates(hass: HomeAssistant) -> 
     client.monitor.network.get_arp_table.assert_not_awaited()
 
 
+async def test_wifi_client_failure_does_not_block_vdom_updates(
+    hass: HomeAssistant,
+) -> None:
+    """Test a malformed wifi response does not fail the shared coordinator."""
+    integration = await async_get_integration(hass, DOMAIN)
+    await integration.async_get_component()
+
+    from custom_components.fortios_kd.coordinator import (  # noqa: PLC0415
+        FortiOSKDCoordinator,
+    )
+
+    client = Mock()
+    client.supports_network_arp = True
+    client.monitor.wifi.get_meta = AsyncMock(return_value={"results": {}})
+    client.monitor.wifi.get_ap_names = AsyncMock(return_value={"results": []})
+    client.monitor.wifi.get_managed_access_points = AsyncMock(
+        return_value={"results": []}
+    )
+    client.monitor.wifi.get_clients = AsyncMock(
+        side_effect=ClientConnectionError("malformed response")
+    )
+    client.monitor.system.get_dhcp_leases = AsyncMock()
+    client.monitor.system.get_vdom_resources = AsyncMock(
+        return_value={"vdom": "root", "results": {}}
+    )
+    client.monitor.network.get_dns_latency = AsyncMock(
+        return_value={"vdom": "root", "results": []}
+    )
+    client.monitor.network.get_arp_table = AsyncMock()
+    client.configuration.system.get_vdoms = AsyncMock(
+        return_value={"results": [{"name": "root"}]}
+    )
+    client.configuration.system.get_vdom_global_settings = AsyncMock(
+        return_value={"results": {"management-vdom": "root"}}
+    )
+    client.configuration.system.get_global_dns = AsyncMock(
+        return_value={"vdom": "root", "results": {}}
+    )
+    client.configuration.system.get_vdom_dns = AsyncMock()
+    client.configuration.wifi.get_vaps = AsyncMock(return_value={"results": []})
+
+    coordinator = FortiOSKDCoordinator(
+        hass,
+        client,
+        include_unassigned_ssids=True,
+    )
+
+    data = await coordinator._async_update_data()  # noqa: SLF001
+
+    assert data["wifi_clients"] == {"results": [], "available": False}
+    assert data["vdoms"] == {
+        "results": [{"name": "root"}],
+        "available": True,
+        "management_vdom": "root",
+    }
+
+
 async def test_vdom_inventory_retains_last_valid_response(
     hass: HomeAssistant,
 ) -> None:

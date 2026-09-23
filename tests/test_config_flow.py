@@ -29,6 +29,9 @@ CONF_SYNC_INTERFACES = "sync_interfaces"
 CONF_SNMP_COMMUNITY = "snmp_community"
 CONF_SNMP_PORT = "snmp_port"
 CONF_REQUEST_TIMEOUT = "request_timeout"
+CONF_DEBUG_RESPONSE_CAPTURE = "debug_response_capture"
+CONF_DEBUG_RESPONSE_CAPTURE_MODE = "debug_response_capture_mode"
+CONF_DEBUG_RESPONSE_CAPTURE_LIMIT = "debug_response_capture_limit"
 CONF_ORGANIZATION_MODE = "organization_mode"
 CONF_HUB_AREA_ID = "hub_area_id"
 CONF_NEW_HUB_AREA_NAME = "new_hub_area_name"
@@ -67,6 +70,9 @@ async def test_user_flow(
             CONF_PORT: 8443,
             CONF_VERIFY_SSL: True,
             CONF_REQUEST_TIMEOUT: 60,
+            CONF_DEBUG_RESPONSE_CAPTURE: False,
+            CONF_DEBUG_RESPONSE_CAPTURE_MODE: "invalid_context",
+            CONF_DEBUG_RESPONSE_CAPTURE_LIMIT: 3,
             CONF_INCLUDE_UNASSIGNED_SSIDS: False,
             CONF_SYNC_ARP_TABLE: False,
             CONF_MATCH_ARP_WIFI_CLIENTS: True,
@@ -90,6 +96,9 @@ async def test_user_flow(
         CONF_PORT: 8443,
         CONF_VERIFY_SSL: True,
         CONF_REQUEST_TIMEOUT: 60,
+        CONF_DEBUG_RESPONSE_CAPTURE: False,
+        CONF_DEBUG_RESPONSE_CAPTURE_MODE: "invalid_context",
+        CONF_DEBUG_RESPONSE_CAPTURE_LIMIT: 3,
         CONF_INCLUDE_UNASSIGNED_SSIDS: False,
         CONF_SYNC_ARP_TABLE: False,
         CONF_MATCH_ARP_WIFI_CLIENTS: True,

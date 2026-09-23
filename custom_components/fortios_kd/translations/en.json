@@ -26,6 +26,9 @@
           "sync_interfaces": "Sync interface devices and rates for all VDOMs",
           "organization_mode": "Organize this FortiGate and its devices",
           "request_timeout": "Request timeout",
+          "debug_response_capture": "Capture malformed API responses",
+          "debug_response_capture_mode": "Debug output detail",
+          "debug_response_capture_limit": "Maximum debug captures",
           "verify_ssl": "Verify SSL certificate",
           "mask_serial_numbers": "Mask serial numbers",
           "mask_ssids": "Mask SSIDs",
@@ -47,6 +50,9 @@
           "sync_interfaces": "Sync interface devices and rates for all VDOMs",
           "organization_mode": "Organize this FortiGate and its devices",
           "request_timeout": "Request timeout",
+          "debug_response_capture": "Capture malformed API responses",
+          "debug_response_capture_mode": "Debug output detail",
+          "debug_response_capture_limit": "Maximum debug captures",
           "verify_ssl": "Verify SSL certificate",
           "mask_serial_numbers": "Mask serial numbers",
           "mask_ssids": "Mask SSIDs",
@@ -55,7 +61,7 @@
           "mask_vlan_ids": "Mask client VLAN IDs",
           "mask_ap_names": "Mask AP names"
         },
-        "description": "Detected FortiOS version: {version}",
+        "description": "Detected FortiOS version: {version}\n\nDebug responses may contain IP addresses, MAC addresses, hostnames, usernames, and SSIDs. FortiGate serial-number fields are redacted. Captures remain in memory only and are cleared when the integration reloads or Home Assistant restarts.",
         "title": "Configure FortiGate"
       },
       "snmp_arp": {

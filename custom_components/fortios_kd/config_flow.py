@@ -17,6 +17,9 @@ from .api.version import FortiOSVersion, version_family
 from .const import (
     CONF_CLIENTS_FOLLOW_AP_AREA,
     CONF_CLIENTS_FOLLOW_AP_LABELS,
+    CONF_DEBUG_RESPONSE_CAPTURE,
+    CONF_DEBUG_RESPONSE_CAPTURE_LIMIT,
+    CONF_DEBUG_RESPONSE_CAPTURE_MODE,
     CONF_DEVICES_FOLLOW_HUB_LABELS,
     CONF_HUB_AREA_ID,
     CONF_HUB_LABEL,
@@ -44,6 +47,9 @@ from .const import (
     CONF_SYNC_INTERFACES,
     DEFAULT_CLIENTS_FOLLOW_AP_AREA,
     DEFAULT_CLIENTS_FOLLOW_AP_LABELS,
+    DEFAULT_DEBUG_RESPONSE_CAPTURE,
+    DEFAULT_DEBUG_RESPONSE_CAPTURE_LIMIT,
+    DEFAULT_DEBUG_RESPONSE_CAPTURE_MODE,
     DEFAULT_DEVICES_FOLLOW_HUB_LABELS,
     DEFAULT_HUB_LABEL_COLOR,
     DEFAULT_INCLUDE_UNASSIGNED_SSIDS,
@@ -71,6 +77,7 @@ from .const import (
     ORGANIZATION_MODE_LABEL,
     ORGANIZATION_MODE_NONE,
 )
+from .debug import DEBUG_CAPTURE_MODE_CONTEXT, DEBUG_CAPTURE_MODE_FULL
 from .organization import FortiOSKDOrganizationManager
 from .snmp_arp import FortiOSKDSnmpArpClient, SnmpArpError
 
@@ -94,6 +101,39 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
                 step=1,
                 mode=selector.NumberSelectorMode.BOX,
                 unit_of_measurement="seconds",
+            )
+        ),
+        vol.Optional(
+            CONF_DEBUG_RESPONSE_CAPTURE,
+            default=DEFAULT_DEBUG_RESPONSE_CAPTURE,
+        ): selector.BooleanSelector(),
+        vol.Optional(
+            CONF_DEBUG_RESPONSE_CAPTURE_MODE,
+            default=DEFAULT_DEBUG_RESPONSE_CAPTURE_MODE,
+        ): selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=[
+                    selector.SelectOptionDict(
+                        value=DEBUG_CAPTURE_MODE_CONTEXT,
+                        label="Invalid data with 100 bytes before and after",
+                    ),
+                    selector.SelectOptionDict(
+                        value=DEBUG_CAPTURE_MODE_FULL,
+                        label="Entire API response",
+                    ),
+                ],
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            )
+        ),
+        vol.Optional(
+            CONF_DEBUG_RESPONSE_CAPTURE_LIMIT,
+            default=DEFAULT_DEBUG_RESPONSE_CAPTURE_LIMIT,
+        ): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=1,
+                max=10,
+                step=1,
+                mode=selector.NumberSelectorMode.BOX,
             )
         ),
         vol.Optional(
@@ -527,6 +567,10 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             user_input[CONF_HOST] = host
             user_input[CONF_PORT] = int(user_input[CONF_PORT])
             user_input[CONF_REQUEST_TIMEOUT] = int(user_input[CONF_REQUEST_TIMEOUT])
+            if CONF_DEBUG_RESPONSE_CAPTURE_LIMIT in user_input:
+                user_input[CONF_DEBUG_RESPONSE_CAPTURE_LIMIT] = int(
+                    user_input[CONF_DEBUG_RESPONSE_CAPTURE_LIMIT]
+                )
             await self.async_set_unique_id(host)
             self._abort_if_unique_id_mismatch()
 
@@ -563,6 +607,10 @@ class FortiOSKDConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             user_input[CONF_HOST] = host
             user_input[CONF_PORT] = int(user_input[CONF_PORT])
             user_input[CONF_REQUEST_TIMEOUT] = int(user_input[CONF_REQUEST_TIMEOUT])
+            if CONF_DEBUG_RESPONSE_CAPTURE_LIMIT in user_input:
+                user_input[CONF_DEBUG_RESPONSE_CAPTURE_LIMIT] = int(
+                    user_input[CONF_DEBUG_RESPONSE_CAPTURE_LIMIT]
+                )
             await self.async_set_unique_id(host)
             self._abort_if_unique_id_configured()
 
