@@ -15,6 +15,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
@@ -65,6 +66,7 @@ from .repairs import async_delete_snmp_arp_issue
 from .snmp_arp import FortiOSKDSnmpArpClient
 
 _LOGGER = logging.getLogger(__name__)
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 PLATFORMS = [
     Platform.BINARY_SENSOR,
     Platform.SENSOR,
